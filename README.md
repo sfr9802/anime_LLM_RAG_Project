@@ -19,7 +19,7 @@
 - **성과** : 빅쿼리 데이터셋을 통한 대규모 데이터베이스 경험  
  다양한 방법의 시각화 방식과 사용방법, 가시성 개선 방법 학습  
  다양한 모델 성능평가지표 학습, EDA기법의 효율적인 사용 방법 학습
-- **노트북 링크**
+- **노트북 링크**  
   [1차프로젝트](https://github.com/sfr9802/port/blob/main/1st_pro/bigquery_sql.sql)
   [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)  
   [3차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)  
