@@ -29,7 +29,7 @@
 - **사용한 기술** : Python, MYSQL, AWS EC2, AWS S3
 - **성과** : 약 1년동안 운영하였고 약 30명 정도의 실 사용자가 있었으며 동의 하에 사용 로그 데이터 수집 함께 진행
 - **노트북 링크**  
- - [챗봇 코드](https://github.com/sfr9802/port/blob/main/discord_bot/joybot.py)  
+  - [챗봇 코드](https://github.com/sfr9802/port/blob/main/discord_bot/joybot.py)  
 
 ### 크롤링 프로젝트
 - **개요** : 네이버지도와 다음뉴스 크롤링
