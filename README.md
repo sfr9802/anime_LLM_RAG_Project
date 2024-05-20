@@ -1,8 +1,6 @@
 # 프로젝트 포트폴리오
 
-## 이 리포지토리는 다양한 데이터 분석 및 머신러닝 프로젝트를 포함하고 있습니다.  
-각 프로젝트는 Jupyter Notebook, SQL, Python 파일로 구성되어 있으며,  
-데이터 전처리, 모델링, 결과 분석 등의 내용을 포함하고 있습니다.  
+## 이 리포지토리는 다양한 데이터 분석 및 머신러닝 프로젝트를 포함하고 있습니다. 각 프로젝트는 Jupyter Notebook, SQL, Python 파일로 구성되어 있으며, 데이터 전처리, 모델링, 결과 분석 등의 내용을 포함하고 있습니다.  
 
 
 ## 프로젝트 목록
@@ -17,6 +15,7 @@
   - [Abalone](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/playgroundregression.ipynb)  
   - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)  
 
+
 ### 프로그래머스 데이터분석 데브코스 프로젝트
 - **개요** : 1차 SQL을 활용한 EDA 수행, 2차 파이썬 기반 데이터 시각화, 3차 ML 예측 모델 구현
 - **사용한 기술** : MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost
@@ -28,12 +27,14 @@
   - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)  
   - [3차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)  
 
+
 ### Discord 챗봇 프로젝트
 - **개요** : Discord API를 이용하여 개발, AWS EC2 인스턴스를 사용한 배포 및 운영
 - **사용한 기술** : Python, MYSQL, AWS EC2, AWS S3
 - **성과** : 약 1년동안 운영하였고 약 30명 정도의 실 사용자가 있었으며 동의 하에 사용 로그 데이터 수집 함께 진행
 - **노트북 링크**  
   - [챗봇 코드](https://github.com/sfr9802/port/blob/main/discord_bot/joybot.py)  
+
 
 ### 크롤링 프로젝트
 - **개요** : 네이버지도와 다음뉴스 크롤링
