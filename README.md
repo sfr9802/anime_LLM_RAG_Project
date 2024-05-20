@@ -1,8 +1,12 @@
 # 프로젝트 포트폴리오
 
-## 이 리포지토리는 다양한 데이터 분석 및 머신러닝 프로젝트를 포함하고 있습니다. 각 프로젝트는 Jupyter Notebook 파일로 구성되어 있으며, 데이터 전처리, 모델링, 결과 분석 등의 내용을 포함하고 있습니다.
+## 이 리포지토리는 다양한 데이터 분석 및 머신러닝 프로젝트를 포함하고 있습니다. 
+## 각 프로젝트는 Jupyter Notebook, SQL, Python 파일로 구성되어 있으며, 
+## 데이터 전처리, 모델링, 결과 분석 등의 내용을 포함하고 있습니다.
+
 
 ## 프로젝트 목록
+
 
 ### Kaggle Playground Competition
 - **개요** : Spaceship Titanic, Regression with an Abalone Dataset, Binary Prediction of Smoker Status using Bio-Signals
