@@ -46,7 +46,7 @@
 - **개요** : 네이버지도와 다음뉴스 크롤링  
 - **사용한 기술** : Python, Selenium, Pandas  
 - **성과**  
-  - 수만개의 데이터를 크롤링 하는건 비용 소모가 꽤 크다는것을 학습  
+  - 수만개의 데이터를 크롤링 하는건 비용 소모가 크다는것을 학습  
   - 자바스크립트를 사용한 웹사이트 크롤링  
 - **노트북 링크** 
   - [네이버 지도](https://github.com/sfr9802/port/blob/main/crawling/navermap_crawling_oilprice.py)  
