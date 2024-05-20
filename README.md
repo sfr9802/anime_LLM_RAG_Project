@@ -9,7 +9,7 @@
 ### Kaggle Playground Competition
 - **개요** : Spaceship Titanic, Binary Prediction of Smoker Status using Bio-Signals
 - **사용한 기술** : Python, Pandas, Matplotlib, TensorFlow, Scikit-learn, XGBoost
-- **성과** : Spaceship Titanic 정확도 80%, Smoker classfication 상위 50%
+- **성과** : Spaceship Titanic 정확도 80%
 - **노트북 링크**  
   - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)  
   - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)  
