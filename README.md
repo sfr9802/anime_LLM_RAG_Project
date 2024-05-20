@@ -31,7 +31,8 @@
   - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)  
   - [3차프로젝트 전처리 및 XGBoost 모델링](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
   - [3차프로젝트 tfdf random forest 모델링](https://www.kaggle.com/code/arinmu/pubg-tfdf)
-  - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)  
+  - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)
+  - [3차프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)
 
 
 ### Discord 챗봇 프로젝트
