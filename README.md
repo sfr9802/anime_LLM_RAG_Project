@@ -20,7 +20,7 @@
 
 ### 프로그래머스 데이터분석 데브코스 프로젝트
 - **개요** : 1차 SQL을 활용한 EDA 수행, 2차 파이썬 기반 데이터 시각화, 3차 ML 예측 모델 구현  
-- **사용한 기술** : MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost  
+- **사용한 기술** : MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost, tfdf randomforest    
 - **성과**  
   - 빅쿼리 데이터셋을 통한 대규모 데이터베이스 경험  
   - 다양한 방법의 시각화 방식과 사용방법, 가시성 개선 방법 학습  
