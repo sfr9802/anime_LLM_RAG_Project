@@ -27,7 +27,7 @@
 - **개요** : Discord API를 이용하여 개발, AWS EC2 인스턴스를 사용한 배포 및 운영
 - **사용한 기술** : Python, MYSQL, AWS EC2, AWS S3
 - **성과** : 약 1년동안 운영하였고 약 30명 정도의 실 사용자가 있었으며 동의 하에 사용 로그 데이터 수집 함께 진행
-- **노트북 링크**  
+- **노트북 링크**
 [챗봇 코드](https://github.com/sfr9802/port/blob/main/discord_bot/joybot.py)
 
 ### 크롤링 프로젝트
