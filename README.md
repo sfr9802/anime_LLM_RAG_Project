@@ -9,14 +9,17 @@
 ### Kaggle Playground Competition
 - **개요** : Spaceship Titanic, Binary Prediction of Smoker Status using Bio-Signals  
 - **사용한 기술** : Python, Pandas, Matplotlib, TensorFlow, Scikit-learn
-- **성과** :  
+- **성과** 
   - TensorFlow 함수형 API 사용법 학습  
   - 피드포워드 신경망 모델 구현  
   - 과적합, 과소적합 해결을 위한 다양한 방법 학습  
 - **노트북 링크**  
   - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)  
-  - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)  
-
+  - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)
+- **시각화 자료**
+  - [Spaceship Titanic 시각화 자료](https://github.com/sfr9802/port/tree/main/kaggle/spacechip_titanic_image)  
+- **프로젝트 셀프리뷰**
+  - [Spaceship Titanic 셀프리뷰](https://arin-nya.tistory.com/86) 
 
 ### 프로그래머스 데이터분석 데브코스 프로젝트
 - **개요** : 1차 SQL을 활용한 EDA 수행, 2차 파이썬 기반 데이터 시각화, 3차 ML 예측 모델 구현  
@@ -27,13 +30,17 @@
   - 다양한 모델 성능평가지표 학습, EDA기법의 효율적인 사용 방법 학습  
 - **노트북 링크**  
   - [1차프로젝트](https://github.com/sfr9802/port/blob/main/1st_pro/bigquery_sql.sql)
-  - [1차프로젝트 셀프리뷰](https://arin-nya.tistory.com/45)
-  - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)  
+  - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
   - [3차프로젝트 전처리 및 XGBoost 모델링](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
   - [3차프로젝트 tfdf random forest 모델링](https://www.kaggle.com/code/arinmu/pubg-tfdf)
   - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)
-  - [3차프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)
-
+- **시각화 자료**
+  - [2차프로젝트 시각화 자료](https://github.com/sfr9802/port/tree/main/2nd_pro/visual)  
+  - [3차프로젝트 시각화 자료](https://github.com/sfr9802/port/tree/main/3rd_pro/cbc_image)  
+- **프로젝트 리뷰**
+  - [1차프로젝트 셀프리뷰](https://arin-nya.tistory.com/45)  
+  - [3차프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)  
+ 
 
 ### Discord 챗봇 프로젝트
 - **개요** : Discord API를 이용하여 개발, AWS EC2 인스턴스를 사용한 배포 및 운영  
@@ -52,7 +59,7 @@
 - **진행 기간** : 2023-09~2023-10  
 - **성과**  
   - 수만개의 데이터를 크롤링 하는건 비용 소모가 크다는것을 학습  
-  - 자바스크립트를 사용한 웹사이트 크롤링  
+  - 자바스크립트가 사용된 웹사이트 크롤링  
 - **노트북 링크** 
   - [네이버 지도](https://github.com/sfr9802/port/blob/main/crawling/navermap_crawling_oilprice.py)  
   - [다음뉴스](https://nbviewer.org/github/sfr9802/port/blob/main/crawling/news_header_crawling.ipynb)  
