@@ -34,9 +34,6 @@
   - [3차프로젝트 전처리 및 XGBoost 모델링](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
   - [3차프로젝트 tfdf random forest 모델링](https://www.kaggle.com/code/arinmu/pubg-tfdf)
   - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)
-- **시각화 자료**
-  - [2차프로젝트 시각화 자료](https://github.com/sfr9802/port/tree/main/2nd_pro/visual)  
-  - [3차프로젝트 시각화 자료](https://github.com/sfr9802/port/tree/main/3rd_pro/cbc_image)  
 - **프로젝트 리뷰**
   - [1차프로젝트 셀프리뷰](https://arin-nya.tistory.com/45)  
   - [3차프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)  
