@@ -16,8 +16,6 @@
 - **노트북 링크**  
   - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)  
   - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)
-- **시각화 자료**
-  - [Spaceship Titanic 시각화 자료](https://github.com/sfr9802/port/tree/main/kaggle/spacechip_titanic_image)  
 - **프로젝트 셀프리뷰**
   - [Spaceship Titanic 셀프리뷰](https://arin-nya.tistory.com/86) 
 
