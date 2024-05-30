@@ -89,8 +89,6 @@
   - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
   - [3차프로젝트 전처리 및 XGBoost 모델링](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
   - [3차프로젝트 tfdf random forest 모델링](https://www.kaggle.com/code/arinmu/pubg-tfdf)
-  - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)
- 
 - **분석 결과**
   - [1차프로젝트 보고서](https://github.com/sfr9802/port/blob/main/1st_pro/1st_proj_report.md)
   - [2차프로젝트 보고서](https://github.com/sfr9802/port/blob/main/2nd_pro/2nd_pro.md)
