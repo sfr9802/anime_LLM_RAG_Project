@@ -92,7 +92,8 @@
   - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)
  
 - **분석 결과**
-  - 11 
+  - [1차프로젝트 보고서](https://github.com/sfr9802/port/blob/main/1st_pro/1st_proj_report.md)
+  - [2차프로젝트 보고서](https://github.com/sfr9802/port/blob/main/2nd_pro/2nd_pro.md)
 - **프로젝트 리뷰**
   - [1차프로젝트 셀프리뷰](https://arin-nya.tistory.com/45)  
   - [3차프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)  
