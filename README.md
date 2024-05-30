@@ -58,7 +58,7 @@
 - **노트북 링크**  
   - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)
   - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)
-  - [프로그래머스_English Premier League (EPL) 승부 예측하기]()
+  - [프로그래머스_English Premier League (EPL) 승부 예측하기](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/epl_tf.ipynb)
   - [Titanic]()
 - **프로젝트 셀프리뷰**
   - [Spaceship Titanic 셀프리뷰](https://arin-nya.tistory.com/86) 
