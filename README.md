@@ -40,7 +40,10 @@
 ## **ML/DL**
 ### Kaggle Playgound Competetions
 - **개요**
-  - Spaceship Titanic, Binary Prediction of Smoker Status using Bio-Signals
+  1. Binary Prediction of Smoker Status using Bio-Signals
+  2. Spaceship Titanic
+  3. 프로그래머스_English Premier League (EPL) 승부 예측하기
+  4. Titanic - Machine Learning from Disaster
 - **목적**
   - 머신러닝, 딥러닝 프레임워크 학습 
 - **사용한 기술**
@@ -50,10 +53,13 @@
 - **성과** 
   - TensorFlow 함수형 API 사용법 학습  
   - 피드포워드 신경망 모델 구현  
-  - 과적합, 과소적합 해결을 위한 다양한 방법 학습  
+  - 과적합, 과소적합 해결을 위한 다양한 방법 학습
+  - 머신러닝 모델 개선 과정 학습
 - **노트북 링크**  
   - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)
-  - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)  
+  - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)
+  - [프로그래머스_English Premier League (EPL) 승부 예측하기]()
+  - [Titanic]()
 - **프로젝트 셀프리뷰**
   - [Spaceship Titanic 셀프리뷰](https://arin-nya.tistory.com/86) 
 
@@ -89,8 +95,6 @@
   - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
   - [3차프로젝트 전처리 및 XGBoost 모델링](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
   - [3차프로젝트 tfdf random forest 모델링](https://www.kaggle.com/code/arinmu/pubg-tfdf)
-  - [3차프로젝트 EDA](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_eda.ipynb)
- 
 - **분석 결과**
   - [1차프로젝트 보고서](https://github.com/sfr9802/port/blob/main/1st_pro/1st_proj_report.md)
   - [2차프로젝트 보고서](https://github.com/sfr9802/port/blob/main/2nd_pro/2nd_pro.md)
