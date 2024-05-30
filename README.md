@@ -16,7 +16,7 @@
   - 약 1년동안 운영하였고 약 30명 정도의 실 사용자가 있었으며 동의 하에 사용 로그 데이터 수집 함께 진행  
   - AWS 환경 구축 및 사용 경험  
 - **노트북 링크**  
-  - [챗봇 코드](https://github.com/sfr9802/port/blob/main/discord_bot/joybot.py)
+  - [챗봇 코드](https://github.com/sfr9802/port/blob/main/discord%20bot/joybot.py)
  
 ### 크롤링 프로젝트
 - **개요**
