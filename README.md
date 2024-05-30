@@ -59,7 +59,7 @@
   - [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)
   - [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)
   - [프로그래머스_English Premier League (EPL) 승부 예측하기](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/epl_tf.ipynb)
-  - [Titanic]()
+  - [Titanic](https://github.com/sfr9802/port/blob/main/kaggle/titanic-xgb%20(1).ipynb)
 - **프로젝트 셀프리뷰**
   - [Spaceship Titanic 셀프리뷰](https://arin-nya.tistory.com/86) 
 
@@ -79,9 +79,11 @@
 - **개요**
   - 1차 SQL을 활용한 EDA 수행, 2차 파이썬 기반 데이터 시각화, 3차 ML 예측 모델 구현
 - **목적**
+  - 협업 경험
   - 데이터 분석 학습
   - 대규모 데이터셋 경험
-  - 핵심 역량을 데이터 분석에 활용 
+  - 핵심 역량 지식 점검
+  - 핵심 역량 데이터 분석에 활용
 - **사용한 기술**
   - MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost, tfdf randomforest
 - **진행 기간** 
@@ -89,7 +91,8 @@
 - **성과**  
   - 빅쿼리 데이터셋을 통한 대규모 데이터베이스 경험  
   - 다양한 방법의 시각화 방식과 사용방법, 가시성 개선 방법 학습  
-  - 다양한 모델 성능평가지표 학습, EDA기법의 효율적인 사용 방법 학습  
+  - 다양한 모델 성능평가지표 학습, EDA기법의 효율적인 사용 방법 학습
+  - 프로젝트 3회 진행하며 협업을 통해 부족한 데이터 분석 지식 피드백
 - **노트북 링크**  
   - [1차프로젝트](https://github.com/sfr9802/port/blob/main/1st_pro/bigquery_sql.sql)
   - [2차프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
