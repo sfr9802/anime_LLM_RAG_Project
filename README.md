@@ -83,8 +83,7 @@ MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost, tfdf randomfo
 2. [Pandas 프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
 3. [ML 프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
 - **분석 결과**  
-1. [SQL 프로젝트 보고서](https://github.com/sfr9802/port/blob/main/1st_pro/1st_proj_report.md)
-2. [Pandas 프로젝트 보고서](https://github.com/sfr9802/port/blob/main/2nd_pro/2nd_pro.md)
+1. [SQL 프로젝트 보고서](https://github.com/sfr9802/port/blob/main/programers_SQL_project/1st_proj_report.md)
 - **프로젝트 리뷰**  
 1. [SQL 프로젝트 셀프리뷰](https://arin-nya.tistory.com/45)
 2. [ML 프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)  
