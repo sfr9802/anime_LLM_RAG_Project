@@ -77,7 +77,7 @@ MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost, tfdf randomfo
 1. 빅쿼리 데이터셋을 통한 대규모 데이터베이스 경험
 2. 시각화 방식과 사용방법, 가시성 개선 방법 학습
 3. 머신러닝 모델 성능평가지표 학습, EDA기법의 효율적인 사용 방법 학습
-4. 프로젝트 4회 동안 협업 진행하며 협업 과정에 대한 이해
+4. 프로젝트 3회 동안 협업 진행하며 협업 과정에 대한 이해
 - **노트북 링크**  
 1. [SQL 프로젝트](https://github.com/sfr9802/port/blob/main/1st_pro/bigquery_sql.sql)
 2. [Pandas 프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
