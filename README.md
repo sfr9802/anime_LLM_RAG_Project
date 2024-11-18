@@ -33,7 +33,7 @@ kaggle playground competition 참여
 - **사용한 기술**  
 Python, Pandas, Matplotlib, TensorFlow, Scikit-learn
 - **진행 기간**  
-2023-11~(현재)
+2023-11~2024-07
 - **성과**  
 1. TensorFlow 함수형 API 사용법 학습
 2. 피드포워드 신경망 모델 구현
@@ -54,7 +54,7 @@ SQL 코딩테스트 문제 풀이
 - **목적**  
 MySQL 문법 숙련도 상승 
 - **진행 기간**  
-2020-01 / 2024-02~(현재)  
+2020-01 / 2024-02~2024-07
 - **링크**  
 [코딩테스트 연습문제 풀이](https://arin-nya.tistory.com/category/%ED%94%84%EB%A1%9C%EA%B7%B8%EB%9E%98%EB%A8%B8%EC%8A%A4/%EC%BD%94%EB%94%A9%ED%85%8C%EC%8A%A4%ED%8A%B8%20%EC%97%B0%EC%8A%B5) 
 
@@ -72,7 +72,7 @@ MySQL 문법 숙련도 상승
 - **사용한 기술**  
 MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost, tfdf randomforest
 - **진행 기간**
-2024-02~2024-06(예정)
+2024-02~2024-06
 - **성과**  
 1. 빅쿼리 데이터셋을 통한 대규모 데이터베이스 경험
 2. 시각화 방식과 사용방법, 가시성 개선 방법 학습
