@@ -1,0 +1,21 @@
+# API 서버
+fastapi
+uvicorn[standard]
+
+# 문장 임베딩 (벡터화)
+sentence-transformers
+
+# 벡터 DB (CPU 기반 FAISS)
+faiss-cpu
+
+# LLM 호출용
+httpx               # 비동기 HTTP 호출 (GPT or HF API 용)
+transformers        # HuggingFace 모델 로딩
+torch               # transformers 실행용 (CPU 가능)
+
+# 데이터 처리
+numpy
+scikit-learn        # (선택: 유사도 계산 등)
+
+# 환경 변수 로딩
+python-dotenv
