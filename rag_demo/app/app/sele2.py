@@ -72,7 +72,7 @@ for page_num in range(1, 1 + MAX_PAGES):
 driver.quit()
 
 # CSV 저장
-with open("yonhap_summary_with_date.csv", "w", encoding="utf-8-sig", newline="") as f:
+with open("yonhap_summary_with_date.csv", "a", encoding="utf-8-sig", newline="") as f:
     writer = csv.DictWriter(f, fieldnames=["url", "title", "summary", "date"])
     writer.writeheader()
     for row in article_data:
