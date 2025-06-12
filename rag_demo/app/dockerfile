@@ -19,4 +19,6 @@ RUN pip install --no-cache-dir \
     httpx \
     tqdm \
     numpy \
-    pandas
+    pandas \
+    langchain \
+    openai 
