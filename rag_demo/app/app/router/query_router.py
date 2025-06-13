@@ -8,23 +8,29 @@ from langchain.chains import RetrievalQA
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
 from models.api_io_dto import QueryRequest, QueryResponse
-
+from vector_store.faiss import get_docs_by_ids, get_relevant_docs, init_index
+from prompt.loader import render_template
+import logging
 router = APIRouter()
 
 @router.post("/query", response_model=QueryResponse)
 def handle_query(req: QueryRequest):
-    docs = get_relevant_docs(req.question)
-    context = "\n\n".join(docs)
-    prompt = f"""
-    다음 문서를 참고해서 질문에 답변해줘 :
-    {context}
     
-    질문 : {req.question}
-    """
+    logging.info(f"Q: {req.question} / A: {answer}")
+
+    docs = get_relevant_docs(req.question)
+    context = "\n\n".join([doc.get("text", "") for doc in docs])
+    
+    if not context.strip():
+        return QueryResponse(question=req.question, answer="관련 문서를 찾지 못했어요.")
+
+    prompt = render_template("rag_prompt", context = context, question = req.question)
+
     answer = ask_gpt(prompt=prompt)
+    
     return QueryResponse(
         question=req.question,
-        answer = answer
+        answer=answer
     )
 
 
