@@ -14,5 +14,3 @@ async def ask_gpt(prompt : str, model="gpt-3.5-turbo"):
     )
     return response["choices"][0]["message"]["content"]
     
-    return f"[MOCK] '{question}' 에 대한 답변 : ... (based on {len(docs)} docs)"
-    
