@@ -11,7 +11,8 @@ object_ids = []
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 #TODO: 인덱스 로딩, 문서 벡터 매핑
-index = faiss.indexFlatL2(384)
+# faiss index for cosine similarity
+index = faiss.IndexFlatL2(384)
 
 def embed(text: str):
     return model.encode([text])[0]
