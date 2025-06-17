@@ -1,0 +1,63 @@
+판 법원이 판결을 내린 사실·이유 및 판결 주문(主文) 등을 적은 문서. 
+선고문(宣告文). 판결서
+{ 
+  doc_class : str 
+  doc_id : str
+  announce_date : str / datetime
+  casenames : str
+  normalized_court : str
+  casetype : str
+  sentences : list[str]
+}
+
+법 
+법령은 입법 기관의 공식적인 서면 제정이며 입법과정의 한 단계다. 
+법령은 입법 기관에서 만든 법이며 일반적으로 무언가를 명령하거나 금지하거나
+ 정책을 선언하는 것을 말한다. 법원에서 판결하는 판례법이나 선례, 
+ 행정기관에서 발행한 규정, 구전율법이나 관습법과 구별된다. 
+ 법령은 국가, 주 또는 도, 카운티 또는 지방자치단체의 입법 기관에서 발의하여
+제정된다.
+
+{
+  statute_name : str
+  effective_date : datetime / timestamp
+  proclamation_date : datetime / timestamp
+  statute_type : str
+  statute_category : str
+  sentence : list[str]
+  date_class : int
+}
+
+심  심판 절차에서 최종적으로 내려진 결정
+{
+  doc_class : str
+  document_type : str
+  doc_id : str
+  decision_date : yyyy.mm.dd
+  result : null
+  sentence : list[str]
+}
+
+유해, doc id, sentences + title 을 통해 LLM create 유도 파일
+유권 해석이란 한 국가기관이 주어진 권한에 근거해서 하는 구속력 있는 법 해석을 뜻한다. 
+공권적 해석 또는 강제적 해석이라고도 한다. 
+법 적용을 임무로 하는 법원이 행하는 사법해석이 가장 보편적이며, 
+대법원을 정점으로 하여 사법해석은 통일되어 있다.
+{
+  doc_class : str
+  doc_id : str
+  response_date : yyyy. dd. mm
+  response_institute : str
+  sentences : list[str]
+  title : str
+}
+
+태그명	설명	예시 문장
+판결주문	최종 결론 + 지급 명령	"피고는 원고에게 86,880,074원을 지급하라"
+사실관계	사건 배경, 계약 내용, 시간 순 흐름	"원고는 2012년 피고와 계약을 체결하였다"
+원고주장	원고가 청구한 이유, 주장 내용	"원고는 계약에 따라 대금을 지급받을 권리가 있다고 주장하였다"
+피고반박	피고가 주장에 반박한 내용	"피고는 계약이 없다고 주장하였다"
+법원판단	법원이 판단한 근거와 해석	"법원은 원고의 주장을 받아들일 수 없다고 판단한다"
+증거정리	증거 목록, 신빙성 언급	"갑 제3호증, 제1심 증인의 진술에 따르면…"
+손해산정	금액 계산, 책임 비율, 감액 논리	"피고의 책임은 90%로 제한한다"
+결론요지	위 내용을 바탕으로 도달한 결론 요약	"따라서 피고는 원고에게 손해배상할 책임이 있다"
