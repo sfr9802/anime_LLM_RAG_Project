@@ -1,0 +1,19 @@
+# base image
+FROM node:20
+
+# app directory
+WORKDIR /app
+
+# install dependencies
+COPY package*.json ./
+RUN npm install
+
+# copy source
+COPY . .
+
+# build
+RUN npm run build
+
+# serve with serve
+RUN npm install -g serve
+CMD ["serve", "-s", "build", "-l", "3000"]
