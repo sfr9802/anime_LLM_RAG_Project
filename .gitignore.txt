@@ -1,0 +1,73 @@
+# === Java ===
+*.class
+*.jar
+*.war
+*.ear
+
+# === IntelliJ IDEA ===
+.idea/
+*.iml
+*.iws
+out/
+
+# === Eclipse ===
+*.classpath
+*.project
+*.settings/
+
+# === Build ===
+/target/
+build/
+
+# === Logs ===
+*.log
+
+# === OS Specific ===
+.DS_Store
+Thumbs.db
+
+# === Maven ===
+.mvn/
+!**/src/main/resources/static/**
+
+# === Gradle ===
+.gradle/
+build/
+!gradle-wrapper.jar
+
+# === Test Coverage ===
+*.ec
+*.exec
+jacoco*.exec
+
+# === Spring Boot DevTools ===
+.spring-boot-devtools.properties
+
+# === Database files ===
+*.h2.db
+*.mv.db
+*.sqlite
+
+# === Custom: Ignore data files ===
+*.json
+*.csv
+
+# === Node (if frontend included) ===
+node_modules/
+/node_modules/
+dist/
+.env
+.env.*
+
+# === Docker ===
+*.pid
+
+# === Logs (again, just in case) ===
+logs/
+*.log
+
+# === Temporary ===
+*.tmp
+*.swp
+*~
+
