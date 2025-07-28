@@ -66,7 +66,7 @@ def get_all_titles_from_paginated_list(start_url: str) -> list:
     return sorted(titles)
 
 if __name__ == "__main__":
-    url = "https://namu.wiki/w/%EB%B6%84%EB%A5%98:%EC%9D%BC%EB%B3%B8%20%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98/%EB%AA%A9%EB%A1%9D"
+    url = "https://namu.wiki/w/%EB%B6%84%EB%A5%98:%EB%B6%84%EA%B8%B0%EB%B3%84%20%EC%9D%BC%EB%B3%B8%20%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98?namespace=%EB%B6%84%EB%A5%98&cuntil=2013%EB%85%84%203%EB%B6%84%EA%B8%B0%20%EC%9D%BC%EB%B3%B8%20%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98"
     titles = get_all_titles_from_paginated_list(url)
     print(f"\n🎉 최종 수집된 애니메이션 제목 수: {len(titles)}개")
 
