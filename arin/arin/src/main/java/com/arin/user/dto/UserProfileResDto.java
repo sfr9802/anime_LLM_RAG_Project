@@ -1,6 +1,7 @@
 package com.arin.user.dto;
 
 import com.arin.user.entity.UserProfile;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 
 @Getter
@@ -8,11 +9,20 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Schema(description = "유저 프로필 응답 DTO")
 public class UserProfileResDto {
-    private Long id;          // UserProfile ID
-    private String nickname;  // 닉네임
-    private String email;     // AppUser.email
-    private String role;      // AppUser.role
+
+    @Schema(description = "UserProfile ID", example = "1")
+    private Long id;
+
+    @Schema(description = "유저 닉네임", example = "arin_dev")
+    private String nickname;
+
+    @Schema(description = "이메일", example = "arin@example.com")
+    private String email;
+
+    @Schema(description = "유저 역할 (USER/ADMIN)", example = "USER")
+    private String role;
 
     public UserProfileResDto(UserProfile userProfile) {
         this.id = userProfile.getId();
@@ -21,5 +31,3 @@ public class UserProfileResDto {
         this.role = userProfile.getAppUser().getRole().name();
     }
 }
-
-

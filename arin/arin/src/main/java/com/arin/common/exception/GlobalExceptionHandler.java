@@ -1,31 +1,33 @@
 package com.arin.common.exception;
 
-import com.arin.common.ApiResponse;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.Objects;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // 유효성 검증 실패 (DTO @Valid 실패 시)
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<?> handleValidation(MethodArgumentNotValidException ex) {
-        String message = Objects.requireNonNull(ex.getBindingResult().getFieldError()).getDefaultMessage();
-        return ResponseEntity.badRequest().body(new ApiResponse<>(false, message));
+    @ExceptionHandler(ExpiredJwtException.class)
+    public ResponseEntity<String> handleExpiredJwt(ExpiredJwtException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("JWT 만료: " + e.getMessage());
     }
 
-    // 그 외 런타임 예외
-    @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<?> handleRuntime(RuntimeException ex) {
-        return ResponseEntity.badRequest().body(new ApiResponse<>(false, ex.getMessage()));
+    @ExceptionHandler(JwtException.class)
+    public ResponseEntity<String> handleJwtException(JwtException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("JWT 오류: " + e.getMessage());
     }
 
-    // 예상 못 한 예외
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<String> handleIllegalArgument(IllegalArgumentException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("잘못된 요청: " + e.getMessage());
+    }
+
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<?> handleUnknown(Exception ex) {
-        return ResponseEntity.internalServerError().body(new ApiResponse<>(false, "Internal server error"));
+    public ResponseEntity<String> handleGeneralException(Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("서버 에러 발생: " + e.getMessage());
     }
 }
+

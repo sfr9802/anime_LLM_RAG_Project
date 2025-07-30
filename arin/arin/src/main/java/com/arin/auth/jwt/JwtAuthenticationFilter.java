@@ -5,6 +5,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j; // ✅ 로그 찍기 위해 추가
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -14,12 +15,14 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
+@Slf4j
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProvider jwtProvider;
     private final UserDetailsService userDetailsService;
     private final AppUserDetailsService appUserDetailsService;
+
     public JwtAuthenticationFilter(JwtProvider jwtProvider,
                                    UserDetailsService userDetailsService,
                                    AppUserDetailsService appUserDetailsService) {
@@ -32,25 +35,46 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
+
+        String token = null;
+
         try {
-            String token = resolveToken(request);
+            token = resolveToken(request);
+            log.debug("요청 URI: {}", request.getRequestURI());
 
-            if (token != null && jwtProvider.validateToken(token)) {
-                Long userId = jwtProvider.getUserId(token);
-                UserDetails userDetails = appUserDetailsService.loadUserById(userId);
+            if (token != null && !token.isBlank()) {
+                log.debug("JWT 추출 성공: {}", token);
 
-                UsernamePasswordAuthenticationToken auth =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails, null, userDetails.getAuthorities()
-                        );
+                if (jwtProvider.validateToken(token)) {
+                    log.debug("JWT 유효성 검사 통과");
 
-                SecurityContextHolder.getContext().setAuthentication(auth);
+                    Long userId = jwtProvider.getUserId(token);
+                    log.debug("JWT에서 userId 추출: {}", userId);
+
+                    UserDetails userDetails = appUserDetailsService.loadUserById(userId);
+                    log.debug("UserDetails 로드 완료: {}", userDetails.getUsername());
+
+                    // 이미 인증되어 있는 상태인지 확인
+                    if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                        UsernamePasswordAuthenticationToken auth =
+                                new UsernamePasswordAuthenticationToken(
+                                        userDetails, null, userDetails.getAuthorities()
+                                );
+                        SecurityContextHolder.getContext().setAuthentication(auth);
+                        log.debug("SecurityContext에 인증 객체 설정 완료");
+                    } else {
+                        log.debug("SecurityContext에 이미 인증 정보가 존재함");
+                    }
+                } else {
+                    log.warn("JWT 유효성 검사 실패: {}", token);
+                }
+            } else {
+                log.debug("Authorization 헤더에 JWT가 없거나 빈 문자열");
             }
 
         } catch (Exception e) {
-            logger.warn("JWT 인증 실패", e);
-
-            // 실패해도 다음 필터로는 넘긴다
+            log.warn("JWT 인증 처리 중 예외 발생 (token: {}): {}", token, e.getMessage(), e);
+            // 필요시 401 응답 반환 가능
         }
 
         filterChain.doFilter(request, response);
@@ -58,9 +82,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private String resolveToken(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
+        log.debug("Authorization 헤더: {}", bearerToken);
         if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
-            return bearerToken.substring(7);
+            String token = bearerToken.substring(7).trim();
+            if (!token.isEmpty()) {
+                return token;
+            }
         }
         return null;
     }
 }
+

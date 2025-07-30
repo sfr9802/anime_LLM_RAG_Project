@@ -3,12 +3,14 @@ package com.arin.auth.controller;
 import com.arin.auth.jwt.JwtProvider;
 import com.arin.auth.entity.AppUser;
 import com.arin.auth.repository.AppUserRepository;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.arin.auth.dto.LoginReq;
 import com.arin.auth.dto.JwtRes;
 
+@Tag(name = "User", description = "유저 관련 API")
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
