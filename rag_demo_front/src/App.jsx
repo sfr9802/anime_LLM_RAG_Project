@@ -8,7 +8,11 @@ function App() {
   const [message, setMessage] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token') || '');
 
-  // 토큰을 매 요청마다 넣도록 설정 (authAxios 안 쓰고 global 방식)
+  // ✅ LLM + RAG 추가
+  const [query, setQuery] = useState('');
+  const [ragAnswer, setRagAnswer] = useState(null);
+
+  // 토큰을 전역 헤더에 설정
   useEffect(() => {
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -17,7 +21,7 @@ function App() {
     }
   }, [token]);
 
-  // 쿼리 파라미터에서 토큰 추출
+  // 쿼리 파라미터에서 토큰 추출 (OAuth 로그인용)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tokenFromOAuth = params.get('token');
@@ -74,6 +78,25 @@ function App() {
     setMessage('로그아웃됨');
   };
 
+  // ✅ LLM + RAG 쿼리 핸들러
+  const handleRagQuery = () => {
+    if (!query.trim()) return;
+
+    axios.post('/api/proxy', {
+      targetUrl: 'http://localhost:8000/rag/query',
+      query: query
+    })
+      .then(res => {
+        setRagAnswer(res.data.answer || JSON.stringify(res.data));
+        setMessage('질의 성공');
+      })
+      .catch(err => {
+        console.error(err);
+        setMessage('질의 실패');
+        setRagAnswer(null);
+      });
+  };
+
   return (
     <div style={{ padding: '20px' }}>
       <h1>사용자 인증</h1>
@@ -109,6 +132,28 @@ function App() {
           <p><strong>역할:</strong> {profile.role}</p>
         </div>
       )}
+
+      {/* ✅ LLM + RAG 쿼리 UI */}
+      <div style={{ marginTop: '30px' }}>
+        <h2>RAG 질의</h2>
+        <input
+          type="text"
+          placeholder="예: 이재명 정부의 부동산 정책"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{ width: '60%', marginRight: '8px' }}
+        />
+        <button onClick={handleRagQuery}>질의하기</button>
+
+        {ragAnswer && (
+          <div style={{ marginTop: '20px' }}>
+            <h3>📘 LLM 응답</h3>
+            <pre style={{ whiteSpace: 'pre-wrap', backgroundColor: '#f5f5f5', padding: '10px' }}>
+              {ragAnswer}
+            </pre>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -27,7 +27,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/", "/login**", "/oauth2/**", "/api/users/**"
+                                "/", "/login**", "/oauth2/**", "/api/users/**", "/api/proxy/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
@@ -37,6 +37,8 @@ public class SecurityConfig {
                         )
                         .successHandler(customOAuth2SuccessHandler) // ✅ 등록
                 )
+
+
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

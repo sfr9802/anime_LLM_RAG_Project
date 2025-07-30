@@ -26,24 +26,28 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         OAuth2User oAuth2User = super.loadUser(userRequest);
 
         String email = oAuth2User.getAttribute("email");
-        String role = "USER"; // 기본 권한
+        String role = "USER";
 
-        // AppUser 저장 또는 조회
+        System.out.println("[OAuth2UserService] 로그인 시도: " + email);
+
         AppUser appUser = appUserRepository.findByEmail(email)
                 .orElseGet(() -> {
                     AppUser newUser = new AppUser(email, AppUser.Role.valueOf(role));
+                    System.out.println("[OAuth2UserService] 신규 AppUser 저장: " + email);
                     return appUserRepository.save(newUser);
                 });
 
-        // ❗ UserProfile이 없다면 자동 생성
         if (!userProfileRepository.existsByAppUser(appUser)) {
-            String nickname = generateNickname(Objects.requireNonNull(email)); // 또는 UUID, 이메일 앞부분 등
+            String nickname = generateNickname(Objects.requireNonNull(email));
+            System.out.println("[OAuth2UserService] UserProfile 없음 → 생성: " + nickname);
             userProfileRepository.save(new UserProfile(nickname, appUser));
         }
 
-        return new CustomOAuth2User(appUser, oAuth2User.getAttributes());
+        System.out.println("[OAuth2UserService] 로그인 완료: " + email + " (id=" + appUser.getId() + ")");
 
+        return new CustomOAuth2User(appUser, oAuth2User.getAttributes());
     }
+
 
     private String generateNickname(String email) {
         return "User_" + email.split("@")[0];
