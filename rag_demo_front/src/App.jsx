@@ -8,33 +8,33 @@ function App() {
   const [message, setMessage] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token') || '');
 
-  // ✅ LLM + RAG 추가
   const [query, setQuery] = useState('');
   const [ragAnswer, setRagAnswer] = useState(null);
 
-  // 토큰을 전역 헤더에 설정
+  // ✅ accessToken을 Axios 전역에 적용
   useEffect(() => {
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      fetchProfile();
     } else {
       delete axios.defaults.headers.common['Authorization'];
     }
   }, [token]);
 
-  // 쿼리 파라미터에서 토큰 추출 (OAuth 로그인용)
+  // ✅ postMessage 방식으로 popup에서 전달된 토큰 수신
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tokenFromOAuth = params.get('token');
-
-    if (tokenFromOAuth && !token) {
-      localStorage.setItem('token', tokenFromOAuth);
-      setToken(tokenFromOAuth);
-      setMessage('OAuth 로그인 성공');
-      window.history.replaceState({}, document.title, window.location.pathname); // URL 정리
-    } else if (token) {
-      fetchProfile();
-    }
-  }, [token]);
+    const handler = (event) => {
+      if (!event.origin.startsWith('http://localhost:3000')) return;
+      const { accessToken } = event.data;
+      if (accessToken) {
+        localStorage.setItem('token', accessToken);
+        setToken(accessToken);
+        setMessage('OAuth 로그인 성공');
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   const fetchProfile = () => {
     axios.get('/api/users/me')
@@ -67,8 +67,21 @@ function App() {
       });
   };
 
+  // ✅ popup 방식으로 OAuth 로그인 시도
   const handleOAuthLogin = () => {
-    window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+    const popup = window.open(
+      'http://localhost:8080/oauth2/authorization/google',
+      'oauth2Login',
+      'width=600,height=700'
+    );
+
+    // 로그인 실패 또는 창 닫힘 대비 (선택사항)
+    const timer = setInterval(() => {
+      if (popup && popup.closed) {
+        clearInterval(timer);
+        setMessage('OAuth 창이 닫혔습니다');
+      }
+    }, 1000);
   };
 
   const handleLogout = () => {
@@ -78,7 +91,6 @@ function App() {
     setMessage('로그아웃됨');
   };
 
-  // ✅ LLM + RAG 쿼리 핸들러
   const handleRagQuery = () => {
     if (!query.trim()) return;
 
@@ -133,7 +145,6 @@ function App() {
         </div>
       )}
 
-      {/* ✅ LLM + RAG 쿼리 UI */}
       <div style={{ marginTop: '30px' }}>
         <h2>RAG 질의</h2>
         <input

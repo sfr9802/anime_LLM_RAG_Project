@@ -1,0 +1,35 @@
+.chat-bubble-wrapper {
+  display: flex;
+  margin: 0.25rem 0;
+}
+
+.chat-bubble-wrapper.left {
+  justify-content: flex-start;
+}
+
+.chat-bubble-wrapper.right {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  max-width: 700px;
+  width: fit-content;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 사용자: 파란색, 우측 */
+.chat-bubble.user {
+  background-color: #2563eb;
+  color: white;
+  border-bottom-right-radius: 0;
+}
+
+/* LLM: 회색, 좌측 */
+.chat-bubble.assistant {
+  background-color: #e5e5e5;
+  color: black;
+  border-bottom-left-radius: 0;
+}

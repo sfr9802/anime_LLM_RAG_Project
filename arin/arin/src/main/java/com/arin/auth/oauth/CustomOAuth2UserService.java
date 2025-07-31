@@ -40,7 +40,13 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         if (!userProfileRepository.existsByAppUser(appUser)) {
             String nickname = generateNickname(Objects.requireNonNull(email));
             System.out.println("[OAuth2UserService] UserProfile 없음 → 생성: " + nickname);
-            userProfileRepository.save(new UserProfile(nickname, appUser));
+            userProfileRepository.save(
+                    UserProfile.builder()
+                            .nickname(nickname)
+                            .appUser(appUser)
+                            .build()
+            );
+
         }
 
         System.out.println("[OAuth2UserService] 로그인 완료: " + email + " (id=" + appUser.getId() + ")");
