@@ -11,15 +11,18 @@ import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 
-@Slf4j  // ✅ SLF4J 로그 어노테이션
+@Slf4j
 @Component
 public class JwtProvider {
 
     @Value("${jwt.secret}")
     private String secretRaw;
 
-    @Value("${jwt.expiration}")
+    @Value("${jwt.expiration}") // Access Token 유효기간 (ms)
     private long expirationMs;
+
+    @Value("${jwt.refresh-expiration}") // Refresh Token 유효기간 (ms)
+    private long refreshExpirationMs;
 
     private Key key;
 
@@ -29,16 +32,27 @@ public class JwtProvider {
         log.info("[JWT] 비밀키 초기화 완료");
     }
 
-    public String generateToken(Long userId, String role) {
+    // ✅ Access 토큰 전용
+    public String generateAccessToken(Long userId, String role) {
+        return generateToken(userId, role, expirationMs);
+    }
+
+    // ✅ Refresh 토큰 전용
+    public String generateRefreshToken(Long userId, String role) {
+        return generateToken(userId, role, refreshExpirationMs);
+    }
+
+    // ✅ 공통 토큰 생성 로직
+    public String generateToken(Long userId, String role, long ttlMillis) {
         String token = Jwts.builder()
                 .claim("userId", userId)
                 .claim("role", role)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
+                .setExpiration(new Date(System.currentTimeMillis() + ttlMillis))
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
 
-        log.info("[JWT] 토큰 생성됨 | userId={}, role={}, expiresIn={}ms", userId, role, expirationMs);
+        log.info("[JWT] 토큰 생성됨 | userId={}, role={}, TTL={}ms", userId, role, ttlMillis);
         return token;
     }
 
@@ -59,27 +73,17 @@ public class JwtProvider {
 
     public Long getUserId(String token) {
         Object userId = getClaims(token).get("userId");
-        Long id = null;
 
-        if (userId instanceof Integer) {
-            id = ((Integer) userId).longValue();
-        } else if (userId instanceof Long) {
-            id = (Long) userId;
-        } else if (userId instanceof String) {
-            id = Long.parseLong((String) userId);
-        } else {
-            log.error("[JWT] userId 타입 비정상: {}", userId);
-            throw new IllegalArgumentException("Invalid userId type in JWT");
-        }
+        if (userId instanceof Integer) return ((Integer) userId).longValue();
+        if (userId instanceof Long) return (Long) userId;
+        if (userId instanceof String) return Long.parseLong((String) userId);
 
-        log.debug("[JWT] userId 추출 성공: {}", id);
-        return id;
+        log.error("[JWT] userId 타입 비정상: {}", userId);
+        throw new IllegalArgumentException("Invalid userId type in JWT");
     }
 
     public String getRole(String token) {
-        String role = (String) getClaims(token).get("role");
-        log.debug("[JWT] role 추출 성공: {}", role);
-        return role;
+        return (String) getClaims(token).get("role");
     }
 
     public boolean validateToken(String token) {
@@ -98,5 +102,20 @@ public class JwtProvider {
             log.warn("JWT 문자열이 비어 있음: {}", e.getMessage());
         }
         return false;
+    }
+
+    public long getRemainingValidity(String token) {
+        try {
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(key)
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+
+            return claims.getExpiration().getTime() - System.currentTimeMillis();
+        } catch (Exception e) {
+            log.error("토큰 만료 시간 계산 실패: {}", e.getMessage());
+            return -1;
+        }
     }
 }

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from models.api_io_dto import QueryRequest, QueryResponse
+from models.query_model import QueryRequest, QueryResponse
 from vector_store.faiss import get_relevant_docs
 from llm_handler.gpt_client import ask_gpt
 from prompt.loader import render_template

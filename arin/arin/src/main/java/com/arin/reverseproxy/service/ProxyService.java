@@ -2,6 +2,7 @@ package com.arin.reverseproxy.service;
 
 import com.arin.auth.oauth.CustomOAuth2User;
 import com.arin.reverseproxy.dto.ProxyRequestDto;
+import com.arin.reverseproxy.dto.ProxyResponseDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
 import org.springframework.security.core.Authentication;
@@ -14,21 +15,18 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ProxyService {
 
-    private final RestTemplate restTemplate;  // ← 필드 정의는 클래스 바깥에 있어야 함
+    private final RestTemplate restTemplate;
 
     public ResponseEntity<?> forward(ProxyRequestDto dto, Authentication auth) {
-        // JWT에서 유저 정보 꺼내기
         CustomOAuth2User user = (CustomOAuth2User) auth.getPrincipal();
-
-        // 유저 정보 로그 or 인증 헤더에 삽입
-        System.out.println("프록시 요청 유저: " + user.getId() + " / role: " + user.getRole());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-User-Id", user.getId().toString());
         headers.set("X-User-Role", user.getRole());
 
-        Map<String, String> bodyMap = Map.of("query", dto.getQuery());
+        Map<String, String> bodyMap = Map.of("question", dto.getQuestion());  // ← 변경됨
+
         HttpEntity<Map<String, String>> entity = new HttpEntity<>(bodyMap, headers);
 
         try {
@@ -36,7 +34,7 @@ public class ProxyService {
                     dto.getTargetUrl(),
                     HttpMethod.POST,
                     entity,
-                    String.class
+                    ProxyResponseDto.class
             );
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)

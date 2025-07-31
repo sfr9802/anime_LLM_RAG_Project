@@ -10,6 +10,6 @@ import lombok.Setter;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ProxyRequestDto {
-    private String targetUrl; // ex: http://localhost:8000/rag/query
-    private String query;     // ex: 자연어 쿼리
+    private String targetUrl;   // ex: http://localhost:8000/query
+    private String question;    // ex: 자연어 질의
 }

@@ -1,11 +1,12 @@
 package com.arin.auth.jwt;
 
 import com.arin.auth.service.AppUserDetailsService;
+import com.arin.auth.service.TokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j; // ✅ 로그 찍기 위해 추가
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -22,13 +23,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtProvider jwtProvider;
     private final UserDetailsService userDetailsService;
     private final AppUserDetailsService appUserDetailsService;
+    private final TokenService tokenService;
 
     public JwtAuthenticationFilter(JwtProvider jwtProvider,
                                    UserDetailsService userDetailsService,
-                                   AppUserDetailsService appUserDetailsService) {
+                                   AppUserDetailsService appUserDetailsService,
+                                   TokenService tokenService) {
         this.jwtProvider = jwtProvider;
         this.userDetailsService = userDetailsService;
         this.appUserDetailsService = appUserDetailsService;
+        this.tokenService = tokenService;
     }
 
     @Override
@@ -45,6 +49,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (token != null && !token.isBlank()) {
                 log.debug("JWT 추출 성공: {}", token);
 
+                // 🔥 블랙리스트 체크
+                if (tokenService.isBlacklisted(token)) {
+                    log.warn("[JWT] 블랙리스트 토큰 접근 시도: {}", token);
+
+                    // 보안상 컨텍스트 초기화
+                    SecurityContextHolder.clearContext();
+
+                    // 명시적인 JSON 응답
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"error\": \"로그아웃된 토큰입니다.\"}");
+                    return;
+                }
+
+                // ✅ 유효한 토큰이라면 인증 처리
                 if (jwtProvider.validateToken(token)) {
                     log.debug("JWT 유효성 검사 통과");
 
@@ -54,7 +73,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     UserDetails userDetails = appUserDetailsService.loadUserById(userId);
                     log.debug("UserDetails 로드 완료: {}", userDetails.getUsername());
 
-                    // 이미 인증되어 있는 상태인지 확인
                     if (SecurityContextHolder.getContext().getAuthentication() == null) {
                         UsernamePasswordAuthenticationToken auth =
                                 new UsernamePasswordAuthenticationToken(
@@ -74,11 +92,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         } catch (Exception e) {
             log.warn("JWT 인증 처리 중 예외 발생 (token: {}): {}", token, e.getMessage(), e);
-            // 필요시 401 응답 반환 가능
+            SecurityContextHolder.clearContext();  // 예외 발생 시도 보안상 초기화
         }
 
         filterChain.doFilter(request, response);
     }
+
 
     private String resolveToken(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
@@ -92,4 +111,3 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return null;
     }
 }
-

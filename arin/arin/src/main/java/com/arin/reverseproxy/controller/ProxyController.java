@@ -1,10 +1,14 @@
 package com.arin.reverseproxy.controller;
 
 import com.arin.reverseproxy.dto.ProxyRequestDto;
+import com.arin.reverseproxy.dto.ProxyResponseDto;
 import com.arin.reverseproxy.service.ProxyService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +21,7 @@ import org.springframework.web.client.RestTemplate;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
 @RequestMapping("/api/proxy")
 @Tag(name = "Reverse Proxy", description = "외부 API 요청을 프록시로 전달합니다.")
 public class ProxyController {
@@ -26,7 +31,8 @@ public class ProxyController {
 
     @Operation(summary = "GET 프록시 요청", description = "GET 방식의 외부 API 요청을 프록시를 통해 전달합니다.")
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(responseCode = "200", description = "성공",
+                    content = @Content(schema = @Schema(implementation = ProxyResponseDto.class))),
             @ApiResponse(responseCode = "401", description = "인증 필요"),
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "502", description = "프록시 오류")

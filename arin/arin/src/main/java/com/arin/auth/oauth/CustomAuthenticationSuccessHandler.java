@@ -1,21 +1,18 @@
 package com.arin.auth.oauth;
 
+import com.arin.auth.dto.TokenResponseDto;
 import com.arin.auth.jwt.JwtProvider;
+import com.arin.auth.service.TokenService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 
 @Slf4j
 @Component
@@ -23,6 +20,8 @@ import java.util.Map;
 public class CustomAuthenticationSuccessHandler implements AuthenticationSuccessHandler {
 
     private final JwtProvider jwtProvider;
+    private final TokenService tokenService;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request,
@@ -38,12 +37,17 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
             log.debug("인증 사용자 ID: {}", userId);
             log.debug("인증 사용자 Role: {}", role);
 
-            String token = jwtProvider.generateToken(userId, role);
-            log.info("JWT 발급 완료");
+            String accessToken = jwtProvider.generateAccessToken(userId, role);
+            String refreshToken = jwtProvider.generateRefreshToken(userId, role);
+
+            long refreshTtl = jwtProvider.getRemainingValidity(refreshToken);
+            tokenService.storeRefreshToken(userId, refreshToken, refreshTtl);
+
+            TokenResponseDto tokenResponse = new TokenResponseDto(accessToken, refreshToken);
 
             response.setContentType("application/json");
             response.setCharacterEncoding("UTF-8");
-            response.getWriter().write("{\"token\":\"" + token + "\"}");
+            response.getWriter().write(objectMapper.writeValueAsString(tokenResponse));
             response.getWriter().flush();
 
             log.info("JWT 응답 전송 완료");
@@ -53,4 +57,3 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
         }
     }
 }
-
