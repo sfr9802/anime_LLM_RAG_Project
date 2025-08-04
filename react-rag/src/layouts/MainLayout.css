@@ -1,0 +1,61 @@
+.layout-container {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background-color: var(--lala-night);
+  color: var(--lala-white);
+}
+
+.main-area {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.layout-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: linear-gradient(to right, var(--lala-purple), var(--lala-pink));
+  border-bottom: 1px solid var(--lala-yellow);
+  color: var(--lala-white);
+}
+
+.left-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-weight: bold;
+  font-size: 20px;
+  color: var(--lala-yellow);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+  text-decoration: none;
+}
+
+.logo:hover {
+  color: var(--lala-pink);
+}
+
+.auth-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-toggle {
+  font-size: 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--lala-white);
+}
+
+.sidebar-toggle:hover {
+  color: var(--lala-yellow);
+}

@@ -20,6 +20,8 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
     private final JwtProvider jwtProvider;
     private final TokenService tokenService;
 
+    private static final String FRONTEND_ORIGIN = "http://localhost:5137"; // ✅ 명시된 origin
+
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request,
                                         HttpServletResponse response,
@@ -39,25 +41,23 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
             long refreshTtl = jwtProvider.getRemainingValidity(refreshToken);
             tokenService.storeRefreshToken(userId, refreshToken, refreshTtl);
 
-            // HTML + JS로 token 전달
+            // ✅ HTML + JS로 token 전달 (보안 적용)
             response.setContentType("text/html;charset=UTF-8");
             response.getWriter().write("""
-            <html><body>
-            <script>
-              window.opener.postMessage({
-                accessToken: '%s',
-                refreshToken: '%s'
-              }, '*');
-              window.close();
-            </script>
-            </body></html>
-        """.formatted(accessToken, refreshToken));
+                <html><body>
+                <script>
+                  window.opener.postMessage({
+                    accessToken: '%s',
+                    refreshToken: '%s'
+                  }, '%s');
+                  window.close();
+                </script>
+                </body></html>
+            """.formatted(accessToken, refreshToken, FRONTEND_ORIGIN));
 
         } catch (Exception e) {
             log.error("OAuth2 로그인 후 토큰 발급 중 오류", e);
             response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "OAuth2 처리 실패");
         }
     }
-
-
 }

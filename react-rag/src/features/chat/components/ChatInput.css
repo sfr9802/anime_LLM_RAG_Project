@@ -1,10 +1,10 @@
 .chat-input {
   width: 100%;
   padding: 1rem;
-  border-top: 1px solid #ccc;
-
+  border-top: 1px solid rgba(255, 255, 255, 0.1); /* 기존 #ccc → 어두운 테마 호환 */
+  background-color: var(--lala-night);
   display: flex;
-  justify-content: center; /* ✅ 핵심 */
+  justify-content: center;
 }
 
 .input-box {
@@ -12,9 +12,20 @@
   max-width: 800px;
   padding: 0.75rem 1rem;
   font-size: 1rem;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  background-color: #fff;
-  color: #000;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background-color: var(--lala-purple);
+  color: var(--lala-white);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: border 0.3s, box-shadow 0.3s;
+}
+
+.input-box::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.input-box:focus {
+  border-color: var(--lala-yellow);
+  box-shadow: 0 0 0 4px rgba(250, 208, 44, 0.2);
+  outline: none;
 }

@@ -1,12 +1,12 @@
 // src/main.tsx
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { RouterProvider } from 'react-router-dom';
-import { router } from './routes';
-// import './styles/global.css'; // 있으면 사용
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+// import "./styles/global.css"; // 필요 시 주석 해제
+import "./styles/lalaland_st.css";
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <App />
   </React.StrictMode>
 );
