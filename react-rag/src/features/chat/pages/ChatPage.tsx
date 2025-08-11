@@ -2,19 +2,45 @@ import { useState, useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types/Message';
 import ChatBubble from '../components/ChatBubble';
 import ChatInput from '../components/ChatInput';
-import './ChatPage.css'; // 스타일 분리
+import { sendMessage } from '../services/chatApi';
+import './ChatPage.css';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const scrollRef = useRef<HTMLDivElement | null>(null); // ⬅️ 스크롤 타겟
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const handleSend = (text: string) => {
+  const handleSend = async (text: string) => {
     const userMsg: ChatMessage = { role: 'user', content: text };
-    const aiMsg: ChatMessage = { role: 'assistant', content: `🤖 이것은 ${text}에 대한 응답입니다.` };
-    setMessages(prev => [...prev, userMsg, aiMsg]);
+    const newMessages = [...messages, userMsg]; // ✅ 최신 상태 반영
+    setMessages(newMessages);
+
+    setLoading(true);
+    try {
+      const { reply, sources } = await sendMessage(newMessages);
+      const aiMsg: ChatMessage = {
+        role: 'assistant',
+        content: reply ?? '🤖 응답이 비어 있습니다.',
+      };
+      setMessages(prev => [...prev, aiMsg]);
+
+      // ✅ sources 처리하려면 아래처럼 별도 저장 or 확장 필요
+      if (sources) {
+        console.log('출처:', sources); // or setSources()
+      }
+
+    } catch (err) {
+      console.error('백엔드 요청 실패:', err);
+      const errMsg: ChatMessage = {
+        role: 'assistant',
+        content: '⚠️ 서버 응답에 실패했습니다.',
+      };
+      setMessages(prev => [...prev, errMsg]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // ✅ 메시지 추가 시 스크롤 아래로
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -25,11 +51,11 @@ export default function ChatPage() {
         {messages.map((msg, i) => (
           <ChatBubble key={i} message={msg} />
         ))}
-        <div ref={scrollRef} /> {/* 자동 스크롤 타겟 */}
+        <div ref={scrollRef} />
       </div>
 
       <div className="chat-input-wrapper">
-        <ChatInput onSend={handleSend} />
+        <ChatInput onSend={handleSend} disabled={loading} /> {/* ✅ loading 방지 */}
       </div>
     </div>
   );
