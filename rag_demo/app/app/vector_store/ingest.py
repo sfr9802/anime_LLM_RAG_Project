@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Dict, Any, Iterable, List, Tuple
 import re, hashlib
 from pymongo import MongoClient
-from app.configure.config import settings
-from app.vector_store.embeddings import embed_passages
-from app.vector_store.chroma_store import upsert
+from configure import config
+from vector_store.embeddings import embed_passages
+from vector_store.chroma_store import upsert
 
 _ws = re.compile(r"\s+")
 def _clean(s: str) -> str:
@@ -35,10 +35,10 @@ def ingest_prechunked(records: Iterable[Dict[str, Any]], dry_run: bool = False):
       "metadata": {..., "seed_title": str}, "chunks": List[str]
     }
     """
-    mc = MongoClient(settings.MONGO_URI)
-    pages = mc[settings.MONGO_DB][settings.MONGO_RAW_COL]
+    mc = MongoClient(config.MONGO_URI)
+    pages = mc[config.MONGO_DB][config.MONGO_RAW_COL]
 
-    B = settings.INDEX_BATCH
+    B = config.INDEX_BATCH
     buf_ids: List[str] = []
     buf_meta: List[Dict[str, Any]] = []
     buf_txt: List[str] = []
