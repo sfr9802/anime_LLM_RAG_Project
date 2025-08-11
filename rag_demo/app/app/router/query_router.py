@@ -1,45 +1,24 @@
-from fastapi import APIRouter
-from models.query_model import QueryRequest, QueryResponse
-from vector_store.faiss import get_relevant_docs
-from llm_handler.gpt_client import ask_gpt
-from prompt.loader import render_template
-import logging
+# router/query_router.py
+from fastapi import APIRouter, Query
+from models.query_model import QueryRequest, QueryResponse, RAGQueryResponse
+from services.search_service import SearchService
+from services.rag_service import RagService
 
-router = APIRouter()
+router = APIRouter(prefix="/rag", tags=["rag"])
+
+# 의존성 간단 주입
+_search = SearchService(top_k=6)
+_rag = RagService(_search)
 
 @router.post("/query", response_model=QueryResponse)
-def handle_query(req: QueryRequest):
-    question = req.question
-    logging.info(f"[QueryRAG] 들어온 질문: {question}")
+def rag_query(req: QueryRequest, top_k: int = Query(6), section: str | None = Query(None)):
+    docs = _rag.retrieve_docs(req.question, section=section, top_k=top_k)
+    if not docs:
+        return QueryResponse(question=req.question, answer="관련 문서를 찾지 못했어요.")
+    # 임시 답변 (LLM 전)
+    return QueryResponse(question=req.question, answer=f"(임시) {len(docs)}건 컨텍스트 확보")
 
-    docs = get_relevant_docs(question)
-    context = "\n\n".join([doc.get("text", "") for doc in docs])
-
-    if not context.strip():
-        logging.warning(f"[QueryRAG] 관련 문서 없음: {question}")
-        return QueryResponse(question=question, answer="관련 문서를 찾지 못했어요.")
-
-    prompt = render_template("rag_prompt", context=context, question=question)
-    answer = ask_gpt(prompt=prompt)
-
-    logging.info(f"[QueryRAG] Q: {question} / A: {answer}")
-    return QueryResponse(question=question, answer=answer)
-
-
-
-
-"""
-# 비동기는 openAI API에서 공식적으로 지원하지 않음.
-# httpx 로 어거지 async 가능하지만 비용 이슈 발생 가능
-@router.post("/query", response_model=QueryResponse) 
-async def query_rag(req : QueryRequest):
-    question = req.question
-    
-    #search vector
-    docs = get_relevant_docs(question)
-    
-    #create llm answer
-    answer = await ask_gpt(question, docs)
-    
-    return QueryResponse(question=question, answer=answer)
-"""
+@router.post("/query/debug", response_model=RAGQueryResponse)
+def rag_query_debug(req: QueryRequest, top_k: int = Query(6), section: str | None = Query(None)):
+    docs = _rag.retrieve_docs(req.question, section=section, top_k=top_k)
+    return RAGQueryResponse(question=req.question, answer="(debug) retrieved", documents=docs)
