@@ -1,25 +1,21 @@
-
-from pymongo import MongoClient
-from pymongo.collection import Collection
+# app/db_connection/mongo_client.py
 import os
+from pymongo import MongoClient
 from configure import config
+from dotenv import load_dotenv
 
-MONGO_URI = os.getenv("mongo_uri", config.MONGO_URL)
-DB_NAME = os.getenv("mongo", config.DB_NAME)
-COLLECTION_NAME = os.getenv("mgcl", config.COLLECTION_NAME)
+load_dotenv()
 
-_client : MongoClient = None
-_collection : Collection = None
+# ✅ 이름 통일: 모두 대문자, config 백업값 사용
+MONGO_URI = os.getenv("MONGO_URI", config.MONGO_URI)
+MONGO_DB  = os.getenv("MONGO_DB",  config.MONGO_DB)
 
-def get_mongo_client() -> MongoClient:
-    global _client
-    if _client is None:
-        _client = MongoClient(MONGO_URI, maxPoolSize=10)
-    return _client
+# 필요 시 옵션 추가 (time out 등)
+mongo_client = MongoClient(MONGO_URI)
+mongo_db = mongo_client[MONGO_DB]
 
-def get_collection() -> Collection:
-    global _collection
-    if _collection is None:
-        client = get_mongo_client()
-        _collection = client[DB_NAME][COLLECTION_NAME]
-    return _collection
+# 컬렉션을 여기서 꺼내 쓸거면 명시
+# RAW_COL   = os.getenv("MONGO_RAW_COL",   config.MONGO_RAW_COL)
+# CHUNK_COL = os.getenv("MONGO_CHUNK_COL", config.MONGO_CHUNK_COL)
+# raw_collection   = mongo_db[RAW_COL]
+# chunk_collection = mongo_db[CHUNK_COL]

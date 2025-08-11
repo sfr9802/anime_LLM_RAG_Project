@@ -1,6 +1,5 @@
-from pydantic import BaseModel
+# models/base.py
+from pydantic import BaseModel, ConfigDict
 
 class AppBaseModel(BaseModel):
-    class Config:
-        orm_mode = True
-        extra = "ignore"
+    model_config = ConfigDict(from_attributes=True)  # v2 권장

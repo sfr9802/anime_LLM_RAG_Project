@@ -3,7 +3,8 @@ from typing import List
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
-from app.configure.config import settings
+from configure import config
+
 
 _model: SentenceTransformer | None = None
 
@@ -11,7 +12,7 @@ def get_model() -> SentenceTransformer:
     global _model
     if _model is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        _model = SentenceTransformer(settings.EMBED_MODEL, trust_remote_code=True, device=device)
+        _model = SentenceTransformer(config.EMBED_MODEL, trust_remote_code=True, device=device)
     return _model
 
 def _encode(texts: List[str]) -> np.ndarray:
@@ -21,7 +22,7 @@ def _encode(texts: List[str]) -> np.ndarray:
     embs = m.encode(
         texts,
         normalize_embeddings=True,
-        batch_size=settings.EMBED_BATCH,
+        batch_size=config.EMBED_BATCH,
         convert_to_numpy=True,
         show_progress_bar=False,
     )

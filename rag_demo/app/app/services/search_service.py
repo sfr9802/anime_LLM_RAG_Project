@@ -1,6 +1,7 @@
+# services/search_service.py
 from typing import List, Dict, Any, Optional
-from vector_store import retrieve  # __init__.py에서 backend 스위치
-from services.adapters import to_docitem
+from vector_store import retrieve
+from services.adapters import to_docitem, flatten_chroma_result  # ⬅ 추가
 from models.document_model import DocumentItem
 
 class SearchService:
@@ -11,6 +12,11 @@ class SearchService:
         self, query: str, section: Optional[str] = None, top_k: Optional[int] = None
     ) -> List[DocumentItem]:
         where: Dict[str, Any] | None = {"section": section} if section else None
-        n = top_k or self.top_k
+        n = int(top_k or self.top_k)
         hits = retrieve(query, top_k=n, where=where)
+
+        # ⬇⬇⬇ 추가: Chroma(dict)면 평탄화
+        if isinstance(hits, dict):
+            hits = flatten_chroma_result(hits)
+
         return [to_docitem(h) for h in hits]
