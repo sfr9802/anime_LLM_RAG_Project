@@ -4,7 +4,7 @@ from typing import Dict, Any, Iterable, List, Tuple
 import re, hashlib
 from pymongo import MongoClient
 from configure import config
-from vector_store.embeddings import embed_passages
+from rag_demo.app.app.domain.embeddings import embed_passages
 from vector_store.chroma_store import upsert
 
 _ws = re.compile(r"\s+")

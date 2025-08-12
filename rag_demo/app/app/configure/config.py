@@ -1,24 +1,26 @@
+# configure/config.py
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-MONGO_DB  = os.getenv("MONGO_DB", "namu_crawl")
-RAW_COL   = os.getenv("MONGO_RAW_COL", "pages")
-CHUNK_COL = os.getenv("MONGO_CHUNK_COL", "chunks")
+# Mongo
+MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://root:rootpass@localhost:27017")
+MONGO_DB: str = os.getenv("MONGO_DB", "namu_crawl")
+MONGO_RAW_COL: str = os.getenv("MONGO_RAW_COL", "pages")
+MONGO_CHUNK_COL: str = os.getenv("MONGO_CHUNK_COL", "chunks")
 
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./data/chroma")
-CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "namu-anime")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
-TOP_K = int(os.getenv("TOP_K", "6"))
+# Chroma
+CHROMA_PATH: str = os.getenv("CHROMA_PATH", "./data/chroma")
+CHROMA_COLLECTION: str = os.getenv("CHROMA_COLLECTION", "namu-anime")
 
-MONGO_URI: str = "mongodb://root:rootpass@localhost:27017"
-MONGO_DB: str = "namu_crawl"
-MONGO_RAW_COL: str = "pages"
+# Embedding & index
+EMBED_MODEL: str = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
+EMBED_BATCH: int = int(os.getenv("EMBED_BATCH", "32"))
+INDEX_BATCH: int = int(os.getenv("INDEX_BATCH", "128"))
 
-CHROMA_PATH: str = "./data/chroma"
-CHROMA_COLLECTION: str = "namu-anime"
+# Search
+TOP_K: int = int(os.getenv("TOP_K", "6"))
+VECTOR_BACKEND: str = os.getenv("VECTOR_BACKEND", "chroma").lower()  # "faiss"|"chroma"
 
-EMBED_MODEL: str = "BAAI/bge-m3"
-EMBED_BATCH: int = 32     # GPU 넉넉하니 64~128로 올려도 됨
-INDEX_BATCH: int = 128
+SUMM_MODEL: str = os.getenv("SUMM_MODEL", "")
