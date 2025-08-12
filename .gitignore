@@ -76,3 +76,7 @@ logs/
 __pycache__/
 *.py[cod]
 *.pyo
+/%HF_HOME%/
+/%HF_HOME
+/chroma_db/
+/chroma_db
