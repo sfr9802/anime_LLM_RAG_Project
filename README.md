@@ -92,6 +92,6 @@ _아직 구현 전_
 ---
 
 ## 📎 Links
-- **Blog**: [기술 아키텍처 및 구현 기록](#)  
-- **HuggingFace Dataset**: [NamuWiki Anime RAG Dataset](#)  
+- **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)  
+- **HuggingFace Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)  
 - **Bruno/Postman Collection**: `collections/rag-demo.json`
