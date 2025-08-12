@@ -39,7 +39,7 @@ build/
 *.ec
 *.exec
 jacoco*.exec
-
+*.exe
 # === Spring Boot DevTools ===
 .spring-boot-devtools.properties
 
@@ -51,6 +51,7 @@ jacoco*.exec
 # === Custom: Ignore data files ===
 *.json
 *.csv
+*.jsonl
 
 # === Node (if frontend included) ===
 node_modules/
