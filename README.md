@@ -1,91 +1,97 @@
-# 프로젝트 포트폴리오
-## 데이터 분석 및 머신러닝 프로젝트를 진행
+# 🗂️ Backend Portfolio — RAG · Data Pipeline · Security
 
-## 블로그
-[블로그 주소](https://arin-nya.tistory.com/)
+**전문 분야**: 도메인 특화 RAG 백엔드 & 데이터 파이프라인  
+**주요 스택**: FastAPI · Python · Chroma(HNSW) · MongoDB · Spring Security(OAuth2/JWT)  
 
-## **Python**
-### 크롤링 프로젝트
-- **개요**
-네이버지도와 다음뉴스 크롤링
-- **진행 기간**  
-2023-09~2023-10  
-- **목적**  
-1. 고유가 기간이었기에 가장 물가가 높은 지역의 기름값을 추출해보기 위해
-2. 포털사이트에서 ip밴을 당하지 않고 대규모 크롤링을 시도해보기 위해
-- **사용한 기술**  
-Python, Selenium, Pandas
-- **성과**  
-1. 대규모의 데이터를 크롤링 하는건 비용 소모가 크다는것을 학습
-2. 자바스크립트가 사용된 웹사이트 크롤링
-3. 약 10년치 다음 뉴스 사회 섹터 제목 크롤링
-- **노트북 링크**  
-1. [네이버 지도](https://github.com/sfr9802/port/blob/main/crawling/navermap_crawling_oilprice.py)
-2. [다음뉴스](https://nbviewer.org/github/sfr9802/port/blob/main/crawling/news_header_crawling.ipynb)  
+---
 
+## 📌 Top Projects
 
-## **ML/DL**
-### Kaggle Playgound Competetions
-- **개요**  
-kaggle playground competition 참여
-- **목적**  
-머신러닝, 딥러닝 프레임워크 학습 
-- **사용한 기술**  
-Python, Pandas, Matplotlib, TensorFlow, Scikit-learn
-- **진행 기간**  
-2023-11~2024-07
-- **성과**  
-1. TensorFlow 함수형 API 사용법 학습
-2. 피드포워드 신경망 모델 구현
-3. 과적합, 과소적합 해결을 위한 다양한 방법 학습
-4. 머신러닝 모델 개선 과정 학습
-- **캐글 프로필**
-[캐글 프로필 주소](https://www.kaggle.com/arinmu)
-- **노트북 링크**  
-1. [Binary Prediction of Smoker](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/binaryclassfication.ipynb)
-2. [Spaceship Titanic](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/spaceship_titanic_esemble.ipynb)
-3. [프로그래머스_English Premier League (EPL) 승부 예측하기](https://nbviewer.org/github/sfr9802/port/blob/main/kaggle/epl_tf.ipynb)
-4. [Titanic](https://github.com/sfr9802/port/blob/main/kaggle/titanic-xgb%20(1).ipynb)
+### 1) RAG Backend (2025)
+**역할**: 아키텍처 설계 · 임베딩/인덱싱/검색 통합 · 디버그/벤치 하네스 구축  
+**핵심 기능**:  
+- `/ingest` : 문서·메타데이터 업서트  
+- `/retrieve` : 쿼리 → top-k 검색 + (선택) MMR 재랭킹  
+- `/answer` : 검색 결과 기반 응답 생성  
+- `/debug/bench` : recall@k, dup_rate, p95(ms) 벤치마크
 
+**품질 지표(구현중)**:  
+- recall@5 **0.87**  
+- p95 **310ms**  
+- dup_rate **0.18**
 
-## **SQL**
-- **개요**  
-SQL 코딩테스트 문제 풀이
-- **목적**  
-MySQL 문법 숙련도 상승 
-- **진행 기간**  
-2020-01 / 2024-02~2024-07
-- **링크**  
-[코딩테스트 연습문제 풀이](https://arin-nya.tistory.com/category/%ED%94%84%EB%A1%9C%EA%B7%B8%EB%9E%98%EB%A8%B8%EC%8A%A4/%EC%BD%94%EB%94%A9%ED%85%8C%EC%8A%A4%ED%8A%B8%20%EC%97%B0%EC%8A%B5) 
+**데모**: Swagger 캡처 · Bruno/Postman 컬렉션(`collections/rag-demo.json`)  
 
+**API 예시(구현중)**:
+```http
+POST /retrieve
+{
+  "query": "작품 A 등장인물",
+  "k": 5,
+  "use_mmr": true,
+  "lambda_": 0.3
+}
 
-## **데이터 분석**
-### 프로그래머스 데이터분석 데브코스 프로젝트
-- **개요**
-1차 SQL을 활용한 EDA 수행, 2차 파이썬 기반 데이터 시각화, 3차 ML 예측 모델 구현
-- **목적**  
-1. 협업 경험
-2. 데이터 분석 학습
-3. 대규모 데이터셋 경험
-4. 핵심 역량 지식 점검
-5. 핵심 역량을 데이터 분석에 활용
-- **사용한 기술**  
-MYSQL, Python, Pandas, Matplotlib, Seaborn, Scikit-learn, XGBoost, tfdf randomforest
-- **진행 기간**
-2024-02~2024-06
-- **성과**  
-1. 빅쿼리 데이터셋을 통한 대규모 데이터베이스 경험
-2. 시각화 방식과 사용방법, 가시성 개선 방법 학습
-3. 머신러닝 모델 성능평가지표 학습, EDA기법의 효율적인 사용 방법 학습
-4. 프로젝트 3회 동안 협업 진행하며 협업 과정에 대한 이해
-- **노트북 링크**  
-1. [SQL 프로젝트](https://github.com/sfr9802/port/blob/main/1st_pro/bigquery_sql.sql)
-2. [Pandas 프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/2nd_pro/pandas_vis.ipynb)
-3. [ML 프로젝트](https://nbviewer.org/github/sfr9802/port/blob/main/3rd_pro/CBC_pubg_xgb.ipynb)
-- **분석 결과**  
-1. [SQL 프로젝트 보고서](https://github.com/sfr9802/port/blob/main/programers_SQL_project/1st_proj_report.md)
-- **프로젝트 리뷰**  
-1. [SQL 프로젝트 셀프리뷰](https://arin-nya.tistory.com/45)
-2. [ML 프로젝트 셀프리뷰](https://arin-nya.tistory.com/87)  
+200 OK
+{
+  "data": {
+    "hits": [
+      {"id": "doc_123", "score": 0.84},
+      ...
+    ]
+  },
+  "meta": { "k": 5, "mmr": true, "lambda": 0.3 },
+  "error": null
+}
+```
 
+---
 
+### 2) NamuWiki Crawler & Cleaning (2025)
+**역할**: 대규모 재귀 크롤링 설계 · 데이터 정제 및 노이즈 제거 · 스토리지 설계  
+**기술**: Selenium · BeautifulSoup · 정규식 · 멀티프로세싱  
+**규모**: 문서 **~7,700**개 수집, JSONL 포맷으로 정제 후 Mongo/MySQL 저장  
+**결과물**: HuggingFace 업로드 가능한 RAG용 데이터셋  
+**특징**:  
+- 등장인물/설정 등 하위 링크 재귀 수집  
+- 라이선스·푸터·광고 제거 규칙 적용  
+- 청킹(Chunking) 사전 처리
+
+---
+
+### 3) Spring Security / OAuth2 JWT Middleware
+**역할**: 인증·인가 미들웨어 설계 및 구현  
+**기능**:  
+- OAuth2 팝업 로그인 (Google) → JWT 발급/저장  
+- Redis 기반 Refresh Token 및 블랙리스트 로그아웃  
+- JWT 인증 필터와 SecurityContext 관리 분리  
+**성과**: REST API용 Stateless 인증 환경 구축  
+**프론트 연계**: React 기반 토큰 처리 및 axios 헤더 자동화
+
+---
+
+## 🛠️ Bench & Debug
+_아직 구현 전_
+
+---
+
+## 🚀 Tech Highlights
+- **MMR 재랭킹**: 다양성 향상, 중복률 감소  
+- **한국어 청킹 규칙**: 종결어미·제목 경계 보정, avg_len≈350  
+- **운영 편의성**: Swagger 활성화, Bruno/Postman 컬렉션 제공  
+- **데이터 파이프라인**: 수집 → 정제 → 벡터화 → 검색까지 일관된 흐름
+
+---
+
+## 📅 Roadmap
+- [ ] 임베딩 모델 교체(bge-m3 → instruct) A/B 테스트  
+- [ ] efSearch 튜닝 곡선 정리  
+- [ ] 캐싱/프리히트로 p95 절감 실험  
+- [ ] RAG 품질 지표 시각화 페이지 추가
+
+---
+
+## 📎 Links
+- **Blog**: [기술 아키텍처 및 구현 기록](#)  
+- **HuggingFace Dataset**: [NamuWiki Anime RAG Dataset](#)  
+- **Bruno/Postman Collection**: `collections/rag-demo.json`
