@@ -2,7 +2,7 @@
 from typing import List, Dict, Any, Optional
 from rag_demo.app.app.infra.vector import retrieve
 from services.adapters import to_docitem, flatten_chroma_result  # ⬅ 추가
-from models.document_model import DocumentItem
+from domain.models.document_model import DocumentItem
 
 class SearchService:
     def __init__(self, top_k: int = 6):

@@ -94,3 +94,41 @@ def make_chunks(text: str, section: str, attach_header: bool = True) -> List[Tup
             prefixed.append((section, f"[{section}] {c}"))
         return prefixed
     return [(section, c) for c in chunks]
+
+def window_by_chars(chunks: List[str], *, target: int = 700, min_chars: int = 350, max_chars: int = 1200, overlap: int = 120) -> List[str]:
+    out: List[str] = []
+    buf: List[str] = []
+    acc = 0
+
+    def flush():
+        nonlocal buf, acc
+        if not buf: return
+        s = " ".join(buf).strip()
+        if not s:
+            buf.clear(); acc = 0; return
+        if len(s) > max_chars:
+            i = 0
+            n = len(s)
+            while i < n:
+                j = min(n, i + max_chars)
+                out.append(s[i:j])
+                i = j - min(overlap, j - i)
+        else:
+            out.append(s)
+        buf.clear(); acc = 0
+
+    for c in chunks:
+        t = (c or "").strip()
+        if not t: 
+            continue
+        if acc + len(t) + 1 <= target:
+            buf.append(t); acc += len(t) + 1
+        else:
+            if acc < min_chars:
+                buf.append(t); acc += len(t) + 1
+                flush()
+            else:
+                flush()
+                buf.append(t); acc = len(t) + 1
+    flush()
+    return out
