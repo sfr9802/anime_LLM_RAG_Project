@@ -1,6 +1,6 @@
 # services/adapters.py
 from typing import Any, Dict, List, Optional
-from models.document_model import DocumentItem
+from domain.models.document_model import DocumentItem
 from rag_demo.app.app.infra.vector.metrics import to_similarity
 
 def flatten_chroma_result(res: Dict[str, Any], default_space: str = "cosine") -> List[Dict[str, Any]]:

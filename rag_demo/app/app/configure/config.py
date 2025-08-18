@@ -24,3 +24,8 @@ TOP_K: int = int(os.getenv("TOP_K", "6"))
 VECTOR_BACKEND: str = os.getenv("VECTOR_BACKEND", "chroma").lower()  # "faiss"|"chroma"
 
 SUMM_MODEL: str = os.getenv("SUMM_MODEL", "")
+
+MONGO_WORKS_COL = getattr(globals(), "MONGO_WORKS_COL", "works")
+MONGO_CHARS_COL = getattr(globals(), "MONGO_CHARS_COL", "characters")
+INDEX_BATCH = getattr(globals(), "INDEX_BATCH", 256)
+CHROMA_COLLECTION = getattr(globals(), "CHROMA_COLLECTION", "namu_anime_v2")

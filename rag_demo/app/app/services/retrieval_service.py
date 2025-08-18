@@ -1,7 +1,7 @@
 # services/retrieval_service.py
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Callable
-from vector_store.chroma_store import search as chroma_search
+from infra.vector.chroma_store import search as chroma_search
 from services.adapters import flatten_chroma_result
 
 SearchFn = Callable[..., Dict[str, Any]]
