@@ -2,7 +2,7 @@
 from typing import Optional
 from typing_extensions import Annotated
 from pydantic import Field
-from models.base import AppBaseModel
+from .base import AppBaseModel
 
 class DocumentItem(AppBaseModel):
     id: str                       # "{pageId}#{chunkIdx}"

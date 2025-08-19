@@ -1,7 +1,7 @@
 # models/query_model.py
 from __future__ import annotations
 from typing import List
-from models.base import AppBaseModel
+from .base import AppBaseModel
 
 class QueryRequest(AppBaseModel):
     question: str

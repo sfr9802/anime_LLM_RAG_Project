@@ -1,5 +1,8 @@
 package com.arin.auth.service;
 
+import com.arin.auth.dto.TokenResponseDto;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -9,10 +12,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.Collections;
 import java.util.Date;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -21,9 +30,16 @@ import java.util.concurrent.TimeUnit;
 public class TokenService {
 
     private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper; // ✅ JSON 직렬화
 
     private static final String BLACKLIST_PREFIX = "blacklist:";
-    private static final String REFRESH_PREFIX = "refresh:";
+    private static final String REFRESH_PREFIX   = "refresh:";
+    private static final String OTC_PREFIX       = "otc:";      // ✅ 1회용 코드
+    private static final SecureRandom RNG        = new SecureRandom();
+
+    // Lua 스크립트로 GET+DEL 원자 실행 (버전 의존성 회피)
+    private static final DefaultRedisScript<String> GETDEL_SCRIPT =
+            new DefaultRedisScript<>("local v=redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]); end; return v", String.class);
 
     @Value("${jwt.secret}")
     private String jwtSecret;
@@ -32,40 +48,31 @@ public class TokenService {
 
     @PostConstruct
     public void init() {
-        byte[] keyBytes = jwtSecret.getBytes();
-
+        byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
         if (keyBytes.length < 32) {
             throw new WeakKeyException("JWT secret key must be at least 256 bits (32 bytes). 현재 길이: " + keyBytes.length);
         }
-
         this.key = Keys.hmacShaKeyFor(keyBytes);
         log.info("[JWT-TOKEN] SecretKey 초기화 완료");
     }
 
-    /**
-     * 토큰을 블랙리스트에 등록하고 TTL 지정
-     */
+    // ===== 블랙리스트 =====
+
     public void blacklistToken(String token) {
-        long expirationMillis = getRemainingTime(token);
-        if (expirationMillis <= 0) {
-            log.warn("[JWT-BLACKLIST] 만료된 토큰은 블랙리스트에 등록하지 않음");
+        long ttl = getRemainingTime(token);
+        if (ttl <= 0) {
+            log.warn("[JWT-BLACKLIST] 만료/무효 토큰은 등록 생략");
             return;
         }
-
-        redisTemplate.opsForValue().set(BLACKLIST_PREFIX + token, "blacklisted", expirationMillis, TimeUnit.MILLISECONDS);
-        log.info("[JWT-BLACKLIST] 토큰 블랙리스트 등록 완료 (TTL={}ms)", expirationMillis);
+        String key = BLACKLIST_PREFIX + sha256(token);
+        redisTemplate.opsForValue().set(key, "1", ttl, TimeUnit.MILLISECONDS);
+        log.info("[JWT-BLACKLIST] 블랙리스트 등록 (TTL={}ms)", ttl);
     }
 
-    /**
-     * 토큰이 블랙리스트에 등록되어 있는지 확인
-     */
     public boolean isBlacklisted(String token) {
-        return redisTemplate.hasKey(BLACKLIST_PREFIX + token);
+        return Boolean.TRUE.equals(redisTemplate.hasKey(BLACKLIST_PREFIX + sha256(token)));
     }
 
-    /**
-     * 토큰의 남은 만료 시간(ms)을 반환
-     */
     private long getRemainingTime(String token) {
         try {
             Claims claims = Jwts.parserBuilder()
@@ -73,40 +80,90 @@ public class TokenService {
                     .build()
                     .parseClaimsJws(token)
                     .getBody();
-
-            Date expiration = claims.getExpiration();
-            long now = System.currentTimeMillis();
-            return expiration.getTime() - now;
-
+            return claims.getExpiration().getTime() - System.currentTimeMillis();
         } catch (Exception e) {
             log.error("[JWT-BLACKLIST] 토큰 만료 시간 추출 실패: {}", e.getMessage());
             return -1;
         }
     }
 
-    /**
-     * 리프레시 토큰 저장
-     */
+    // ===== Refresh =====
+
     public void storeRefreshToken(Long userId, String refreshToken, long ttlMillis) {
         String key = REFRESH_PREFIX + userId;
         redisTemplate.opsForValue().set(key, refreshToken, ttlMillis, TimeUnit.MILLISECONDS);
-        log.info("[JWT-REFRESH] 리프레시 토큰 저장 완료 | key={}, TTL={}ms", key, ttlMillis);
+        log.info("[JWT-REFRESH] 저장 | key={}, TTL={}ms", key, ttlMillis);
     }
 
-    /**
-     * 리프레시 토큰 조회
-     */
     public String getRefreshToken(Long userId) {
-        String key = REFRESH_PREFIX + userId;
-        return redisTemplate.opsForValue().get(key);
+        return redisTemplate.opsForValue().get(REFRESH_PREFIX + userId);
     }
 
-    /**
-     * 리프레시 토큰 삭제
-     */
     public void deleteRefreshToken(Long userId) {
-        String key = REFRESH_PREFIX + userId;
-        redisTemplate.delete(key);
-        log.info("[JWT-REFRESH] 리프레시 토큰 삭제 완료 | key={}", key);
+        redisTemplate.delete(REFRESH_PREFIX + userId);
+        log.info("[JWT-REFRESH] 삭제 | key={}", REFRESH_PREFIX + userId);
+    }
+
+    // ===== One-Time Code (교환 플로우) =====
+
+    /** 1회용 코드 발급 (기본 60초) */
+    public String issueOneTimeCode(Long userId, String accessToken, String refreshToken, int ttlSeconds) {
+        if (ttlSeconds <= 0) ttlSeconds = 60;
+
+        TokenResponseDto dto = new TokenResponseDto(accessToken, refreshToken);
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(dto);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("토큰 직렬화 실패", e);
+        }
+
+        // 충돌 방지를 위해 SETNX로 할당. 드물게 충돌나면 재시도.
+        for (int i = 0; i < 5; i++) {
+            String code = generateCode();
+            String key = OTC_PREFIX + code;
+            Boolean ok = redisTemplate.opsForValue().setIfAbsent(key, json, ttlSeconds, TimeUnit.SECONDS);
+            if (Boolean.TRUE.equals(ok)) {
+                log.info("[OTC] 코드 발급 userId={}, TTL={}s", userId, ttlSeconds);
+                return code;
+            }
+        }
+        throw new IllegalStateException("1회용 코드 발급 실패(충돌 과다)");
+    }
+
+    /** 1회용 코드 소비(원자적 get+del). 성공 시 즉시 삭제됨. */
+    public Optional<TokenResponseDto> consumeOneTimeCode(String code) {
+        if (code == null || code.isBlank()) return Optional.empty();
+        String key = OTC_PREFIX + code;
+
+        String json = redisTemplate.execute(GETDEL_SCRIPT, Collections.singletonList(key));
+        if (json == null) {
+            return Optional.empty(); // 만료/이미 사용됨
+        }
+        try {
+            return Optional.of(objectMapper.readValue(json, TokenResponseDto.class));
+        } catch (Exception e) {
+            log.error("[OTC] 역직렬화 실패", e);
+            return Optional.empty();
+        }
+    }
+
+    // ===== helpers =====
+
+    private static String generateCode() {
+        // URL-safe, padding 없는 32바이트 랜덤 → 약 43자
+        byte[] buf = new byte[32];
+        RNG.nextBytes(buf);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(buf);
+    }
+
+    private static String sha256(String s) {
+        try {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] dig = md.digest(s.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(dig.length * 2);
+            for (byte b : dig) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception e) { throw new RuntimeException(e); }
     }
 }

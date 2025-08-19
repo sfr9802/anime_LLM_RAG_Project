@@ -9,11 +9,7 @@ OVERLAP = 120    # 경계 걸침 방지
 _ws = re.compile(r"\s+")
 # 한국어 종결/문장부호/괄호 대응
 _SENT_SEP = re.compile(
-    r"""           # 문장 끝 후보
-    (?<=\.|!|\?|…|다\.|요\.|죠\.|네\.|습니다\.|였다\.)   # 문장 끝 패턴
-    ["'」』)]*                                        # 닫는 따옴표/괄호 가능
-    \s+                                               # 공백
-    """, re.X
+    r'((?:[.!?…]|다\.|요\.|죠\.|네\.|습니다\.|였다\.)["\'」』)]*)\s+'
 )
 
 def normalize(text: str) -> str:
@@ -22,18 +18,19 @@ def normalize(text: str) -> str:
     return text
 
 def split_sentences_ko(text: str) -> List[str]:
-    # 문단 단위 먼저 자르고, 각 문단을 문장으로 추가 분할
     paras = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
     sents: List[str] = []
     for p in paras:
-        parts = [s.strip() for s in _SENT_SEP.split(p) if s.strip()]
+        # 2) "문장끝+따옴표/괄호+공백" → "문장끝+따옴표/괄호 + \n" 로 바꿔서 분할
+        marked = _SENT_SEP.sub(r"\1\n", p)
+        parts = [s.strip() for s in marked.split("\n") if s.strip()]
         for s in parts:
-            # 너무 긴 문장은 서브-세그먼트(쉼표/세미콜론/접속사)
             if len(s) > MAX_CH * 1.2:
                 subs = re.split(r"(?:,|;| 그러나 | 하지만 | 그리고 | 또한 )", s)
                 for sub in subs:
-                    if sub and len(sub.strip()) > 0:
-                        sents.append(sub.strip())
+                    sub = sub.strip()
+                    if sub:
+                        sents.append(sub)
             else:
                 sents.append(s)
     return sents

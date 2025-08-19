@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
-from models import SearchRequest, SearchResponse, SearchResult
-from rag_demo.app.app.infra.vector import search_vectors  # __init__.py에서 export한 함수
+from domain.models.search_model import SearchRequest, SearchResponse, SearchResult
+from infra.vector import search_vectors  # __init__.py에서 export한 함수
 
 router = APIRouter(prefix="/exp", tags=["experiment"])
 

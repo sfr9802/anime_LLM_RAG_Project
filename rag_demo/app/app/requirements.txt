@@ -19,3 +19,5 @@ scikit-learn        # (선택: 유사도 계산 등)
 
 # 환경 변수 로딩
 python-dotenv
+
+PyJWT

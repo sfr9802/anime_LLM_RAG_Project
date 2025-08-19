@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
+import java.util.Objects;
 
 @Slf4j
 @Component
@@ -32,27 +33,37 @@ public class JwtProvider {
         log.info("[JWT] 비밀키 초기화 완료");
     }
 
-    // ✅ Access 토큰 전용
+    // 변경: 여러 역할 지원 + sub 추가
     public String generateAccessToken(Long userId, String role) {
-        return generateToken(userId, role, expirationMs);
+        return generateToken(userId, java.util.List.of(role), expirationMs);
     }
-
-    // ✅ Refresh 토큰 전용
     public String generateRefreshToken(Long userId, String role) {
-        return generateToken(userId, role, refreshExpirationMs);
+        return generateToken(userId, java.util.List.of(role), refreshExpirationMs);
     }
 
-    // ✅ 공통 토큰 생성 로직
-    public String generateToken(Long userId, String role, long ttlMillis) {
+    public String generateToken(Long userId, java.util.Collection<String> roles, long ttlMillis) {
+        var rolesUpper = roles.stream()
+                .filter(Objects::nonNull)
+                .map(r -> r.trim().toUpperCase())
+                .filter(r -> !r.isEmpty())
+                .toList();
+
+        var authorities = rolesUpper.stream()
+                .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
+                .toList();
+
         String token = Jwts.builder()
+                .setSubject(String.valueOf(userId))                 // ✅ sub 추가 (스프링 principal용)
                 .claim("userId", userId)
-                .claim("role", role)
+                .claim("roles", rolesUpper)                         // ✅ CompositeJwtAuthConverter/FastAPI가 읽음
+                .claim("authorities", authorities)                  // ✅ 여분(스프링 ROLE_* 바로 인식)
+                // .claim("scope", List.of("read","write"))          // 필요 시
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + ttlMillis))
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
 
-        log.info("[JWT] 토큰 생성됨 | userId={}, role={}, TTL={}ms", userId, role, ttlMillis);
+        log.info("[JWT] 토큰 생성 | sub={}, roles={}, TTL={}ms", userId, rolesUpper, ttlMillis);
         return token;
     }
 

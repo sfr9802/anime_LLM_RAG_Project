@@ -1,19 +1,16 @@
+// features/auth/hooks/useOAuthListener.ts
 import { useEffect } from "react";
 
-const useOAuthListener = (onReceiveToken: (accessToken: string, refreshToken?: string) => void) => {
+export default function useOAuthListener(onSuccess: (a: string, r?: string) => void) {
   useEffect(() => {
-    const listener = (e: MessageEvent) => {
-      if (e.origin !== import.meta.env.VITE_OAUTH_URL) return;
-      const { accessToken, refreshToken } = e.data || {};
-
-      if (accessToken) {
-        onReceiveToken(accessToken, refreshToken);
+    const handler = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return;
+      const data = ev.data;
+      if (data?.type === "oauth-success" && data?.accessToken) {
+        onSuccess(data.accessToken, data.refreshToken);
       }
     };
-
-    window.addEventListener("message", listener);
-    return () => window.removeEventListener("message", listener);
-  }, [onReceiveToken]);
-};
-
-export default useOAuthListener;
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [onSuccess]);
+}

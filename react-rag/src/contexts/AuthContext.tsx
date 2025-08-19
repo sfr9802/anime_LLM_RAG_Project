@@ -7,8 +7,8 @@ import {
   useContext,
   useMemo,
 } from "react";
+import { useLocation } from "react-router-dom";
 
-// 타입 선언
 interface User {
   id: number;
   username: string;
@@ -24,33 +24,31 @@ interface AuthContextType {
   logout: () => Promise<void>;
 }
 
-// Context 초기화
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// ✅ useAuth 훅
 export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  return ctx;
 };
 
-// ✅ AuthProvider 컴포넌트
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const { pathname } = useLocation();
+
+  const isAuthScreen =
+    pathname.startsWith("/login") || pathname.startsWith("/oauth");
+  const accessToken =
+    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
   const fetchMe = useCallback(async () => {
-    setLoading(true);
     try {
-      const res = await axios.get("/api/users/me");
+      const res = await axios.get<User>("/api/users/me");
       setUser(res.data);
     } catch (err) {
       console.warn("[Auth] /me API 호출 실패", err);
       setUser(null);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -59,7 +57,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const accessToken = localStorage.getItem("accessToken");
       localStorage.removeItem("accessToken");
       localStorage.removeItem("refreshToken");
-
       if (accessToken) {
         await axios.post("/api/auth/logout", null, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -68,28 +65,35 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     } catch (err) {
       console.warn("🚨 로그아웃 요청 실패", err);
     }
-
     setUser(null);
     window.location.href = "/";
   }, []);
 
-  const isAuthenticated = !!user;
-
-  const contextValue = useMemo(() => ({
-    user,
-    loading,
-    isAuthenticated,
-    fetchMe,
-    logout,
-  }), [user, loading, isAuthenticated, fetchMe, logout]);
-
+  // ✅ 핵심: 조건부로만 /me 호출
   useEffect(() => {
-    fetchMe();
-  }, [fetchMe]);
+    // 인증 화면이거나 토큰 없으면 호출하지 않음
+    if (isAuthScreen || !accessToken) {
+      setLoading(false);
+      setUser(null);
+      return;
+    }
+
+    (async () => {
+      setLoading(true);
+      await fetchMe();
+      setLoading(false);
+    })();
+  }, [isAuthScreen, accessToken, fetchMe]);
+
+  // isAuthenticated는 토큰 존재 OR /me 결과로 판단 (깜빡임/초기화 방지)
+  const isAuthenticated = !!accessToken && (!!user || !isAuthScreen);
+
+  const contextValue = useMemo(
+    () => ({ user, loading, isAuthenticated, fetchMe, logout }),
+    [user, loading, isAuthenticated, fetchMe, logout]
+  );
 
   return (
-    <AuthContext.Provider value={contextValue}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>
   );
 };
