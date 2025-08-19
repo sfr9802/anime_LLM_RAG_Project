@@ -1,5 +1,5 @@
 from typing import List
-from models.base import AppBaseModel
+from .base import AppBaseModel
 
 class SearchRequest(AppBaseModel):
     query: str

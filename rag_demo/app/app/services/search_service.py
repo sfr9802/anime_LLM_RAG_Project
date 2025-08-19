@@ -1,6 +1,6 @@
 # services/search_service.py
 from typing import List, Dict, Any, Optional
-from rag_demo.app.app.infra.vector import retrieve
+from infra.vector import retrieve
 from services.adapters import to_docitem, flatten_chroma_result  # ⬅ 추가
 from domain.models.document_model import DocumentItem
 

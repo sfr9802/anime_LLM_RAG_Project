@@ -1,6 +1,6 @@
+// layouts/MainLayout.tsx
 import { useState } from "react";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import { useMe } from "@/hooks/useMe";
 import { useAuth } from "@/contexts/AuthContext";
 import Sidebar from "./Sidebar";
 import "@/styles/lalaland_st.css";
@@ -9,12 +9,12 @@ import "@/styles/components.css";
 
 interface Props {
   children: React.ReactNode;
+  minimal?: boolean; // ✅ 추가
 }
 
-export default function MainLayout({ children }: Props) {
+export default function MainLayout({ children, minimal = false }: Props) {
   const [darkMode, setDarkMode] = useDarkMode();
-  const { user, loading } = useMe();
-  const { logout } = useAuth();
+  const { user, loading, logout } = useAuth();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem("sidebarCollapsed");
@@ -33,36 +33,36 @@ export default function MainLayout({ children }: Props) {
 
   return (
     <div className="layout-container">
-      <Sidebar collapsed={sidebarCollapsed} />
+      {!minimal && <Sidebar collapsed={sidebarCollapsed} />}
 
       <div className="main-area">
-        <header className="layout-header">
-          <div className="left-controls">
-            <button className="sidebar-toggle button-lala" onClick={toggleSidebar}>
-              ≡
-            </button>
-            <a href="/" className="logo" aria-label="홈으로 이동" style={{ color: "var(--lala-yellow)" }}>
-              GPT Clone
-            </a>
-          </div>
+        {!minimal && (
+          <header className="layout-header">
+            <div className="left-controls">
+              <button className="sidebar-toggle button-lala" onClick={toggleSidebar}>≡</button>
+              <a href="/" className="logo" aria-label="홈으로 이동" style={{ color: "var(--lala-yellow)" }}>
+                GPT Clone
+              </a>
+            </div>
 
-          <div className="auth-controls">
-            <button className="button-lala" onClick={() => setDarkMode((prev) => !prev)}>
-              {darkMode ? "☀️" : "🌙"}
-            </button>
+            <div className="auth-controls">
+              <button className="button-lala" onClick={() => setDarkMode((prev) => !prev)}>
+                {darkMode ? "☀️" : "🌙"}
+              </button>
 
-            {!loading && (
-              user ? (
-                <>
-                  <span className="username">{user.username}</span>
-                  <button className="button-lala" onClick={logout}>로그아웃</button>
-                </>
-              ) : (
-                <button className="button-lala" onClick={() => location.assign("/login")}>로그인</button>
-              )
-            )}
-          </div>
-        </header>
+              {!loading && (
+                user ? (
+                  <>
+                    <span className="username">{user.username}</span>
+                    <button className="button-lala" onClick={logout}>로그아웃</button>
+                  </>
+                ) : (
+                  <button className="button-lala" onClick={() => location.assign("/login")}>로그인</button>
+                )
+              )}
+            </div>
+          </header>
+        )}
 
         <main className="layout-main">{children}</main>
       </div>
