@@ -1,7 +1,7 @@
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import List
-from .cfg import EMBED_MODEL
+from configure.config import EMBED_MODEL
 
 _model = None
 

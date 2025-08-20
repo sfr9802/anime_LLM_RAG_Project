@@ -1,28 +1,93 @@
-from typing import Optional
-from services.search_service import SearchService
+# services/rag_service.py
+from __future__ import annotations
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+from jinja2 import Template
 
+from services.search_service import SearchService
+from configure import config
+# from infra.llm.local_llm_client import chat  # ← 로컬 LLM HTTP(or in-process) 클라
+from infra.llm.llm_client import chat
 class RagService:
     def __init__(self, search: SearchService):
         self.search = search
+        self.max_chars = 3000
 
-    def retrieve_docs(self, question: str, section: Optional[str] = None, top_k: int = 6):
-        return self.search.search(question, section=section, top_k=top_k)
+    def retrieve_docs(self, question: str, section: Optional[str] = None, top_k: Optional[int] = None):
+        k = top_k or config.TOP_K
+        return self.search.search(question, section=section, top_k=k)
 
-    def build_context(self, docs, max_chars: int = 3000) -> str:
-        # 간단 컨텍스트 빌더 (필요하면 문서간 구분자/메타 포함)
+    def build_context(self, docs, max_chars: Optional[int] = None) -> str:
+        max_chars = max_chars or self.max_chars
         parts, size = [], 0
         for d in docs:
-            chunk = d.text.strip()
-            if not chunk:
+            # d가 객체/딕셔너리 아무거나 와도 방어적으로 처리
+            text = getattr(d, "text", None)
+            if text is None and isinstance(d, dict):
+                text = d.get("text")
+            if not text:
                 continue
-            if size + len(chunk) > max_chars:
+            t = text.strip()
+            if not t:
+                continue
+            if size + len(t) > max_chars:
                 break
-            parts.append(chunk)
-            size += len(chunk)
+            parts.append(t)
+            size += len(t)
         return "\n\n".join(parts)
 
-    # 나중에 LLM 붙일 메서드
-    # def answer(self, question: str, docs):
-    #     context = self.build_context(docs)
-    #     prompt = render_template("rag_prompt", context=context, question=question)
-    #     return ask_gpt(prompt)
+    def _render_prompt(self, question: str, context: str) -> str:
+        # 우선 네가 가진 렌더러가 있으면 사용
+        try:
+            from prompt.renderer import render_template as _render
+            # 템플릿 파일명이 rag_prompt.j2라 가정 (네 구조에 맞춤)
+            return _render("rag_prompt.j2", question=question, context=context)
+        except Exception:
+            # fallback: 직접 템플릿 읽기
+            tpl_path = Path(__file__).resolve().parents[1] / "prompt" / "templates" / "rag_prompt.j2"
+            if tpl_path.exists():
+                tpl = Template(tpl_path.read_text(encoding="utf-8"))
+                return tpl.render(question=question, context=context)
+            # 최후의 보루(임시 프롬프트)
+            return (
+                "You are a precise assistant. Use ONLY the provided context to answer.\n"
+                "If not in context, reply briefly that you don't know.\n\n"
+                f"Question:\n{question}\n\nContext:\n{context}\n\nAnswer:"
+            )
+
+    async def answer(
+        self,
+        question: str,
+        section: Optional[str] = None,
+        top_k: Optional[int] = None,
+        max_tokens: int = 512,
+        temperature: float = 0.2,
+    ) -> Dict[str, Any]:
+        docs = self.retrieve_docs(question, section=section, top_k=top_k or config.TOP_K)
+        context = self.build_context(docs)
+        if not context:
+            return {
+                "answer": "컨텍스트가 없어 답변을 생성하지 않는다.",
+                "sources": [],
+                "used_model": config.LLM_MODEL,
+            }
+
+        prompt = self._render_prompt(question, context)
+        messages = [
+            {"role": "system", "content": "답변은 한국어. 제공된 컨텍스트만 사용. 모르면 모른다고 답하라."},
+            {"role": "user", "content": prompt},
+        ]
+        out = await chat(messages, model=config.LLM_MODEL, max_tokens=max_tokens, temperature=temperature)
+
+        # 소스 메타 간단 정리
+        sources: List[Dict[str, Any]] = []
+        for d in docs:
+            meta = {}
+            for k in ("id", "doc_id", "title", "score", "seg_index"):
+                v = getattr(d, k, None) if not isinstance(d, dict) else d.get(k)
+                if v is not None:
+                    meta[k] = v
+            if meta:
+                sources.append(meta)
+
+        return {"answer": out, "sources": sources, "used_model": config.LLM_MODEL}
