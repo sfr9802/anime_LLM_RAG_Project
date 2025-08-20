@@ -8,9 +8,10 @@ from services.eval_service import evaluate_hit as svc_evaluate_hit
 # ▼ 추가 import
 from services.search_service import SearchService
 from services.rag_service import RagService
-from infra.llm.local_llm_client import chat
+from rag_demo.app.app.infra.llm.clients.local_http_client import chat
 from configure import config
-
+from infra.llm.provider import get_chat
+from configure import config
 router = APIRouter(prefix="/debug", tags=["debug"])
 
 # 기존 그대로
@@ -44,13 +45,17 @@ def debug_eval_hit(req: EvalReq = Body(...)):
 # 여기부터 LLM/RAG 디버그
 # =========================
 
-# 1) LLM 핑 (최소 통신 테스트)
 @router.get("/ping-llm")
 async def ping_llm():
-    msg = [{"role": "user", "content": "한 줄로만 대답해."}]
-    out = await chat(msg, model=config.LLM_MODEL, max_tokens=32, temperature=0.2)
-    return {"ok": True, "model": config.LLM_MODEL, "answer": out}
-
+    chat = get_chat()
+    msg = [{"role":"user","content":"한 줄로만 대답해."}]
+    out = await chat(msg, max_tokens=32, temperature=0.2)
+    used_model = {
+        "local-http": config.LOCAL_LLM_MODEL,
+        "local-inproc": "llama-cpp-local",
+        "openai": config.OPENAI_MODEL,
+    }[config.LLM_PROVIDER]
+    return {"ok": True, "provider": config.LLM_PROVIDER, "model": used_model, "answer": out}
 # 2) RAG 즉석 호출 (검색→컨텍스트→LLM)
 _rag = RagService(search=SearchService())
 
