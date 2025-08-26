@@ -86,7 +86,7 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
             candidate = req.getParameter("front");
         }
 
-        return (candidate != null && isAllowedFront(candidate, props.getAllowedOrigins()))
+        return (isAllowedFront(candidate, props.getAllowedOrigins()))
                 ? candidate
                 : configured;
     }

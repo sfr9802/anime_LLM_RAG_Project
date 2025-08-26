@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional, Union
 import threading
 import chromadb
-from configure import config
+import app.app.configure.config as config
 
 _client: Optional[chromadb.Client] = None
 _coll: Optional[Any] = None
@@ -108,3 +108,4 @@ def search(
         "space": _space(),
         **res,
     }
+    

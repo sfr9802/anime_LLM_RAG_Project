@@ -1,6 +1,6 @@
 # app/vector_store/__init__.py
 from typing import Dict, Any, List, Optional
-from configure import config
+import app.app.configure.config as config
 from .faiss import get_relevant_docs as _faiss_search
 from .chroma_store import search as _chroma_search
 

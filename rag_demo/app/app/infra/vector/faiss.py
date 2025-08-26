@@ -1,7 +1,7 @@
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
-from infra.mongo import mongo_client 
+from app.app.infra.mongo import mongo_client 
 from bson import ObjectId
 
 id_map = {}

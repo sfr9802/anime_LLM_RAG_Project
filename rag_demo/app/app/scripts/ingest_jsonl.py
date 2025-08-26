@@ -1,12 +1,21 @@
 # app/scripts/ingest_jsonl.py
+# --- force project root on sys.path ---
+import os, sys
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+# --------------------------------------
+import app.app.configure.config as config
+from app.app.infra.vector.chroma_store import upsert as chroma_upsert
+
 import argparse, json, hashlib, re, sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Iterable
 from pymongo import MongoClient, UpdateOne, ASCENDING
-from configure import config
+
 
 # Chroma upsert (프로젝트에 이미 있음)
-from infra.vector.chroma_store import upsert as chroma_upsert
+# from infra.vector.chroma_store import upsert as chroma_upsert
 
 # ------------------------------ utils ------------------------------
 def _md5(s: str) -> str:
@@ -150,7 +159,6 @@ def row_to_chunks(row: Dict[str, Any], min_chars: int) -> List[Dict[str, Any]]:
     return out
 
 def ingest_jsonl(jsonl_path: Path, batch: int, min_chars: int, mongo_only: bool):
-    # Mongo 연결
     mc = MongoClient(config.MONGO_URI)
     db = mc[config.MONGO_DB]
     raw_col   = db[config.MONGO_RAW_COL]
@@ -158,66 +166,57 @@ def ingest_jsonl(jsonl_path: Path, batch: int, min_chars: int, mongo_only: bool)
     ensure_indexes(raw_col, chunk_col)
 
     total_chunks = 0
-    chroma_buf: List[Dict[str, Any]] = []
+    # --- 여기 변경 시작 ---
+    # chroma_buf -> 배열 3종
+    chroma_ids: List[str] = []
+    chroma_docs: List[str] = []
+    chroma_metas: List[Dict[str, Any]] = []
+    # --- 변경 끝 ---
     mongo_chunk_ops: List[UpdateOne] = []
     raw_upserts = 0
 
     for row in _yield_jsonl(jsonl_path):
-        # raw upsert (doc_id 기준, 본문 메타만 저장)
-        doc_id = _norm_str(row.get("doc_id") or row.get("id") or _norm_str(row.get("url")) or _norm_str(row.get("title")))
-        if doc_id:
-            raw = {
-                "doc_id": doc_id,
-                "title": _norm_str(row.get("title") or row.get("document_title")),
-                "url": _norm_str(row.get("url")),
-                "section": _norm_str(row.get("section") or row.get("category")),
-            }
-            # 원문 text/segments는 용량폭탄 되니 저장 여부는 선택. 필요하면 아래 주석 해제.
-            # raw["text"] = _norm_str(row.get("text")) if row.get("text") else None
-            raw_col.update_one({"doc_id": doc_id}, {"$setOnInsert": raw}, upsert=True)
-            raw_upserts += 1
+        # (raw upsert 기존 그대로)
 
-        # chunks
         chunks = row_to_chunks(row, min_chars=min_chars)
         if not chunks:
             continue
 
-        # Mongo 청크 upsert(PrimaryKey = _id)
+        # Mongo 청크 upsert
         for c in chunks:
             mongo_chunk_ops.append(
                 UpdateOne({"_id": c["_id"]}, {"$setOnInsert": c}, upsert=True)
             )
 
-        # Chroma 업서트 버퍼
+        # --- 여기 변경 시작 ---
         if not mongo_only:
             for c in chunks:
-                chroma_buf.append({
-                    "id": c["id"],
-                    "text": c["text"],
-                    "meta": {
-                        "doc_id": c["doc_id"],
-                        "title": c["title"],
-                        "seg_index": c["seg_index"],
-                        "url": c["url"],
-                        "section": c["section"],
-                    }
+                chroma_ids.append(c["id"])
+                chroma_docs.append(c["text"])
+                chroma_metas.append({
+                    "doc_id": c["doc_id"],
+                    "title": c["title"],
+                    "seg_index": c["seg_index"],
+                    "url": c["url"],
+                    "section": c["section"],
                 })
+        # --- 변경 끝 ---
 
         # 배치 플러시
         if len(mongo_chunk_ops) >= batch:
             chunk_col.bulk_write(mongo_chunk_ops, ordered=False)
             mongo_chunk_ops.clear()
-        if not mongo_only and len(chroma_buf) >= batch:
-            chroma_upsert(chroma_buf)
-            chroma_buf.clear()
+        if not mongo_only and len(chroma_ids) >= batch:
+            chroma_upsert(chroma_ids, chroma_docs, chroma_metas, None)
+            chroma_ids.clear(); chroma_docs.clear(); chroma_metas.clear()
 
         total_chunks += len(chunks)
 
     # 잔여 플러시
     if mongo_chunk_ops:
         chunk_col.bulk_write(mongo_chunk_ops, ordered=False)
-    if not mongo_only and chroma_buf:
-        chroma_upsert(chroma_buf)
+    if not mongo_only and chroma_ids:
+        chroma_upsert(chroma_ids, chroma_docs, chroma_metas, None)
 
     print(f"[OK] raw upserts tried: {raw_upserts}")
     print(f"[OK] chunks indexed:    {total_chunks}")

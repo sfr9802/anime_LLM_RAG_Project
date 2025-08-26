@@ -1,11 +1,15 @@
 # configure/config.py
 import os
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+
+# 항상 이 파일 기준으로 app/app/.env를 로드
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=False)
 
 # --- Mongo ---
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://root:rootpass@localhost:27017")
-MONGO_DB = os.getenv("MONGO_DB", "namu_crawl")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://raguser:ragpass@localhost:27017/clean_namu_crawl?authSource=clean_namu_crawl")
+MONGO_DB = os.getenv("MONGO_DB", "clean_namu_crawl")
 MONGO_RAW_COL = os.getenv("MONGO_RAW_COL", "pages")
 MONGO_CHUNK_COL = os.getenv("MONGO_CHUNK_COL", "chunks")
 
