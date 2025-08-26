@@ -1,0 +1,18 @@
+name: rag311
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy=1.26.*
+  - pytorch
+  - pytorch-cuda=12.1  # GPU 없으면 이 줄 삭제하고 'cpuonly'로 대체
+  - pip
+  - pip:
+      - "FlagEmbedding>=1.2.10"
+      - "sentence-transformers>=2.7.0"
+      - "chromadb==0.5.5"
+      - "fastapi"
+      - "uvicorn[standard]"
