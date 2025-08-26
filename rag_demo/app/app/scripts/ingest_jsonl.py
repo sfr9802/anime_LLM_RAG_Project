@@ -1,241 +1,158 @@
-# app/scripts/ingest_jsonl.py
-# --- force project root on sys.path ---
-import os, sys
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-# --------------------------------------
-import app.app.configure.config as config
-from app.app.infra.vector.chroma_store import upsert as chroma_upsert
+from __future__ import annotations
+import argparse, json, hashlib
+from typing import Dict, Any, List, Tuple
 
-import argparse, json, hashlib, re, sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Iterable
-from pymongo import MongoClient, UpdateOne, ASCENDING
+from app.app.infra.vector.chroma_store import (
+    upsert_batch,
+    reset_collection,
+    hard_reset_persist_dir,
+)
+from app.app.domain.embeddings import EmbedAdapter
 
-
-# Chroma upsert (프로젝트에 이미 있음)
-# from infra.vector.chroma_store import upsert as chroma_upsert
-
-# ------------------------------ utils ------------------------------
-def _md5(s: str) -> str:
-    return hashlib.md5(s.encode("utf-8")).hexdigest()
-
-def _sid(doc_id: str, idx: int, text: str) -> str:
-    # 재실행 안전 ID
-    return f"{doc_id}:{idx}:{_md5(text)[:10]}"
-
-def _norm_str(x: Optional[str]) -> str:
-    return (x or "").strip()
-
-def _yield_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as f:
-        for ln, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except Exception as e:
-                print(f"[WARN] line {ln} JSON parse error: {e}", file=sys.stderr)
-
-# 매우 단순 청커 (문단→문장 기준, 길이 목표로 합치기)
-_SENT = re.compile(r"(?<=[.!?。？！])\s+")
-def simple_chunk(text: str, target_len: int = 900, max_len: int = 1300) -> List[str]:
-    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks: List[str] = []
-    for p in paras:
-        if len(p) <= target_len:
-            chunks.append(p)
-            continue
-        sents = _SENT.split(p)
-        buf = []
-        cur = 0
-        for s in sents:
-            s = s.strip()
-            if not s: 
-                continue
-            if cur + len(s) + 1 > max_len and buf:
-                chunks.append(" ".join(buf))
-                buf, cur = [s], len(s)
-            else:
-                buf.append(s); cur += len(s) + 1
-        if buf:
-            chunks.append(" ".join(buf))
-    return chunks or ([text] if text.strip() else [])
-
-# ------------------------------ ingest ------------------------------
-def ensure_indexes(raw_col, chunk_col):
+# 선택적: 고급 청킹이 있으면 사용
+def _load_chunker():
     try:
-        raw_col.create_index([("doc_id", ASCENDING)], unique=True, name="u_doc_id")
-    except Exception: pass
-    try:
-        chunk_col.create_index([("doc_id", ASCENDING), ("seg_index", ASCENDING)], unique=True, name="u_doc_seg")
-    except Exception: pass
+        from app.app.domain.chunker import chunk_text  # (text, max_tokens=...) -> list[Chunk]
+        return ("token", chunk_text)
+    except Exception:
+        return ("chars", None)
 
-def row_to_chunks(row: Dict[str, Any], min_chars: int) -> List[Dict[str, Any]]:
-    title   = _norm_str(row.get("title") or row.get("document_title"))
-    doc_id  = _norm_str(row.get("doc_id") or row.get("id") or _md5(json.dumps(row)[:128]))
-    section_order = row.get("section_order")
-    sections = row.get("sections") if isinstance(row.get("sections"), dict) else None
+def _id_of(title: str) -> str:
+    return hashlib.sha1((title or "").strip().encode("utf-8")).hexdigest()[:24]
 
-    # 섹션 순서 결정
-    sec_names: List[str] = []
-    if sections:
-        if isinstance(section_order, list) and section_order:
-            # 파일에 들어있는 순서 유지
-            sec_names = [s for s in section_order if s in sections]
-        else:
-            sec_names = list(sections.keys())
+def _extract_text_and_sections(d: Dict[str, Any]) -> Tuple[str, List[str]]:
+    secs = d.get("sections") or {}
+    y = secs.get("요약") or {}
+    parts: List[str] = []
+    if isinstance(y, dict):
+        for key in ("text",):
+            if y.get(key): parts.append(y[key])
+        if not parts and isinstance(y.get("bullets"), list):
+            parts.append("\n".join([str(b) for b in y["bullets"] if b]))
+        if not parts and isinstance(y.get("chunks"), list):
+            parts.append("\n".join([str(c) for c in y["chunks"] if c]))
 
-    out: List[Dict[str, Any]] = []
-    idx = 0
+    # fallback: 다른 섹션 전부 긁기 (text|content|summary 순)
+    if not parts:
+        for k, v in secs.items():
+            if k == "요약": continue
+            if isinstance(v, list):
+                for it in v:
+                    if not isinstance(it, dict): continue
+                    for cand in ("text", "content", "summary"):
+                        if it.get(cand):
+                            parts.append(str(it[cand]))
+                            break
 
-    if sections:
-        for sec in sec_names:
-            entry = sections.get(sec)
-            # entry가 dict인 케이스(권장: {"text": "...", "urls":[...]})
-            if isinstance(entry, dict):
-                raw_text = _norm_str(entry.get("text"))
-                url_val = entry.get("urls")
-                if isinstance(url_val, list) and url_val:
-                    url = _norm_str(url_val[0])
-                elif isinstance(url_val, str):
-                    url = _norm_str(url_val)
-                else:
-                    url = ""
-            # entry가 문자열인 케이스도 허용
-            elif isinstance(entry, str):
-                raw_text = _norm_str(entry)
-                url = ""
-            else:
-                continue
+    full = "\n\n".join([p for p in parts if p and p.strip()])
+    return full, list(secs.keys())
 
-            if not raw_text:
-                continue
-
-            chunks = simple_chunk(raw_text)  # 문단/문장 기반 간단 청킹
-            for t in chunks:
-                t = t.strip()
-                if len(t) < min_chars:
-                    continue
-                out.append({
-                    "id": _sid(doc_id, idx, t),     # Chroma id
-                    "_id": _sid(doc_id, idx, t),    # Mongo chunk PK
-                    "doc_id": doc_id,
-                    "seg_index": idx,
-                    "text": t,
-                    "title": title,
-                    "url": url,
-                    "section": sec,
-                })
-                idx += 1
-
-    else:
-        # fallback: segments/text 스키마도 지원(다른 파일 재사용 대비)
-        segs = row.get("segments")
-        if isinstance(segs, list) and segs:
-            chunks = [_norm_str(t) for t in segs if _norm_str(t)]
-        else:
-            text = _norm_str(row.get("text"))
-            chunks = simple_chunk(text) if text else []
-
-        for t in chunks:
-            t = t.strip()
-            if len(t) < min_chars:
-                continue
-            out.append({
-                "id": _sid(doc_id, idx, t),
-                "_id": _sid(doc_id, idx, t),
-                "doc_id": doc_id,
-                "seg_index": idx,
-                "text": t,
-                "title": title,
-                "url": _norm_str(row.get("url")),
-                "section": _norm_str(row.get("section") or row.get("category")),
-            })
-            idx += 1
-
+def _chunk_fallback(text: str, max_chars: int = 2000) -> List[Tuple[str, Dict[str, Any]]]:
+    """chunker 미탑재 시 문자 기준 청킹."""
+    out: List[Tuple[str, Dict[str, Any]]] = []
+    if not text: return out
+    s = 0
+    i = 0
+    n = len(text)
+    while s < n:
+        e = min(s + max_chars, n)
+        out.append((text[s:e], {"section": "요약/본문", "subsection": f"part-{i}"}))
+        s = e
+        i += 1
     return out
-
-def ingest_jsonl(jsonl_path: Path, batch: int, min_chars: int, mongo_only: bool):
-    mc = MongoClient(config.MONGO_URI)
-    db = mc[config.MONGO_DB]
-    raw_col   = db[config.MONGO_RAW_COL]
-    chunk_col = db[config.MONGO_CHUNK_COL]
-    ensure_indexes(raw_col, chunk_col)
-
-    total_chunks = 0
-    # --- 여기 변경 시작 ---
-    # chroma_buf -> 배열 3종
-    chroma_ids: List[str] = []
-    chroma_docs: List[str] = []
-    chroma_metas: List[Dict[str, Any]] = []
-    # --- 변경 끝 ---
-    mongo_chunk_ops: List[UpdateOne] = []
-    raw_upserts = 0
-
-    for row in _yield_jsonl(jsonl_path):
-        # (raw upsert 기존 그대로)
-
-        chunks = row_to_chunks(row, min_chars=min_chars)
-        if not chunks:
-            continue
-
-        # Mongo 청크 upsert
-        for c in chunks:
-            mongo_chunk_ops.append(
-                UpdateOne({"_id": c["_id"]}, {"$setOnInsert": c}, upsert=True)
-            )
-
-        # --- 여기 변경 시작 ---
-        if not mongo_only:
-            for c in chunks:
-                chroma_ids.append(c["id"])
-                chroma_docs.append(c["text"])
-                chroma_metas.append({
-                    "doc_id": c["doc_id"],
-                    "title": c["title"],
-                    "seg_index": c["seg_index"],
-                    "url": c["url"],
-                    "section": c["section"],
-                })
-        # --- 변경 끝 ---
-
-        # 배치 플러시
-        if len(mongo_chunk_ops) >= batch:
-            chunk_col.bulk_write(mongo_chunk_ops, ordered=False)
-            mongo_chunk_ops.clear()
-        if not mongo_only and len(chroma_ids) >= batch:
-            chroma_upsert(chroma_ids, chroma_docs, chroma_metas, None)
-            chroma_ids.clear(); chroma_docs.clear(); chroma_metas.clear()
-
-        total_chunks += len(chunks)
-
-    # 잔여 플러시
-    if mongo_chunk_ops:
-        chunk_col.bulk_write(mongo_chunk_ops, ordered=False)
-    if not mongo_only and chroma_ids:
-        chroma_upsert(chroma_ids, chroma_docs, chroma_metas, None)
-
-    print(f"[OK] raw upserts tried: {raw_upserts}")
-    print(f"[OK] chunks indexed:    {total_chunks}")
-    print(f"[OK] chroma collection: {config.CHROMA_COLLECTION} @ {config.CHROMA_PATH}")
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--jsonl", required=True, help="path to jsonl file")
-    ap.add_argument("--batch", type=int, default=int(config.INDEX_BATCH if hasattr(config, 'INDEX_BATCH') else 256))
-    ap.add_argument("--min-chars", type=int, default=80, help="skip chunks shorter than this")
-    ap.add_argument("--mongo-only", action="store_true", help="only write to Mongo, skip Chroma")
+    ap.add_argument("--input", required=True, help="v3 JSONL path")
+    ap.add_argument("--batch", type=int, default=1000)
+    ap.add_argument("--max-chars", type=int, default=2000, help="fallback chunk size (chars)")
+    ap.add_argument("--reset", action="store_true", help="drop & recreate collection before ingest")
     args = ap.parse_args()
 
-    path = Path(args.jsonl)
-    if not path.exists():
-        print(f"[ERR] not found: {path}")
-        sys.exit(1)
+    # 깨진 sysdb(_type 오류) 방지: --reset이면 폴더 통째 초기화
+    if args.reset:
+        try:
+            hard_reset_persist_dir()
+        except Exception:
+            # permission 등으로 실패하면 소프트 리셋이라도
+            reset_collection()
 
-    ingest_jsonl(path, batch=args.batch, min_chars=args.min_chars, mongo_only=args.mongo_only)
+    mode, chunker = _load_chunker()
+    embedder = EmbedAdapter()
+
+    staged: List[tuple[str, str, Dict[str, Any]]] = []
+    total_docs = 0
+    total_chunks = 0
+
+    with open(args.input, "r", encoding="utf-8") as f:
+        for line in f:
+            d = json.loads(line)
+            title = d.get("title") or (d.get("metadata") or {}).get("seed_title")
+            if not title: continue
+            doc_id = d.get("doc_id") or _id_of(title)
+            text, sections_present = _extract_text_and_sections(d)
+            if not text: continue
+
+            base_meta = {
+                "doc_id": doc_id,
+                "title": title,
+                "seed_title": (d.get("metadata") or {}).get("seed_title") or "",
+                "url": d.get("url") or "",
+                "parent": d.get("parent") or "",
+                # 리스트는 문자열로
+                "sections_present": ",".join([str(s) for s in sections_present if s]) if sections_present else "",
+            }
+
+
+            # 청킹
+            if mode == "token" and chunker is not None:
+                try:
+                    chunks = []
+                    for ch in chunker(text, max_tokens=480):
+                        m = dict(base_meta)
+                        sec = getattr(ch, "meta", {}).get("section") if hasattr(ch, "meta") else None
+                        sub = getattr(ch, "meta", {}).get("subsection") if hasattr(ch, "meta") else None
+                        m.update({"section": sec or "요약/본문", "subsection": sub or ""})
+                        chunks.append((doc_id, getattr(ch, "text", None) or str(ch), m))
+                except Exception:
+                    chunks = []
+                    for text_piece, m2 in _chunk_fallback(text, args.max_chars):
+                        m = dict(base_meta); m.update(m2)
+                        chunks.append((doc_id, text_piece, m))
+            else:
+                chunks = []
+                for text_piece, m2 in _chunk_fallback(text, args.max_chars):
+                    m = dict(base_meta); m.update(m2)
+                    chunks.append((doc_id, text_piece, m))
+
+            staged.extend(chunks)
+            total_docs += 1
+            total_chunks += len(chunks)
+
+            # 배치 업서트
+            if len(staged) >= args.batch:
+                try:
+                    upsert_batch(staged, embedder, id_prefix=None)
+                except KeyError as e:
+                    if "_type" in str(e):
+                        hard_reset_persist_dir()
+                        upsert_batch(staged, embedder, id_prefix=None)
+                    else:
+                        raise
+                staged.clear()
+
+    if staged:
+        try:
+            upsert_batch(staged, embedder, id_prefix=None)
+        except KeyError as e:
+            if "_type" in str(e):
+                hard_reset_persist_dir()
+                upsert_batch(staged, embedder, id_prefix=None)
+            else:
+                raise
+        staged.clear()
+
+    print(f"[INGEST DONE] docs={total_docs} chunks={total_chunks} mode={mode}")
 
 if __name__ == "__main__":
     main()
