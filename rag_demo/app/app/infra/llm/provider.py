@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Callable, Awaitable, Dict, List
-from configure import config
+from app.app.configure import config
 
 # 각 클라이언트의 chat 함수를 가져오지 않고 지연 import로 의존 최소화
 def get_chat() -> Callable[[List[Dict[str, str]], int, float], Awaitable[str]]:
