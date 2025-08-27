@@ -4,10 +4,10 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from jinja2 import Template
 
-from services.search_service import SearchService
-from configure import config
+from ..services.search_service import SearchService
+from ..configure import config
 # from infra.llm.local_llm_client import chat  # ← 로컬 LLM HTTP(or in-process) 클라
-from infra.llm.llm_client import chat
+from ..infra.llm.clients.local_http_client import chat
 class RagService:
     def __init__(self, search: SearchService):
         self.search = search
@@ -20,20 +20,19 @@ class RagService:
     def build_context(self, docs, max_chars: Optional[int] = None) -> str:
         max_chars = max_chars or self.max_chars
         parts, size = [], 0
+        seen_titles = set()
         for d in docs:
-            # d가 객체/딕셔너리 아무거나 와도 방어적으로 처리
-            text = getattr(d, "text", None)
-            if text is None and isinstance(d, dict):
-                text = d.get("text")
-            if not text:
-                continue
+            title = getattr(d, "title", None) if not isinstance(d, dict) else (d.get("title"))
+            if title:
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+            text = getattr(d, "text", None) if not isinstance(d, dict) else d.get("text")
+            if not text: continue
             t = text.strip()
-            if not t:
-                continue
-            if size + len(t) > max_chars:
-                break
-            parts.append(t)
-            size += len(t)
+            if not t: continue
+            if size + len(t) > max_chars: break
+            parts.append(t); size += len(t)
         return "\n\n".join(parts)
 
     def _render_prompt(self, question: str, context: str) -> str:

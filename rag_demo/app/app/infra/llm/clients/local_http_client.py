@@ -5,7 +5,7 @@ import os
 import httpx
 import anyio
 
-from configure import config
+from app.app.configure import config
 
 # 공통: messages 형식은 OpenAI chat와 동일 [{"role":"system/user/assistant","content":"..."}]
 

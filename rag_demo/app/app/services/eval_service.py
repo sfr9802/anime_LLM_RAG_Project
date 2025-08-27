@@ -1,8 +1,8 @@
 # services/eval_service.py
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Literal, Callable
-from infra.vector.chroma_store import search as chroma_search
-from services.adapters import flatten_chroma_result
+from ..infra.vector.chroma_store import search as chroma_search
+from ..services.adapters import flatten_chroma_result
 
 SearchFn = Callable[..., Dict[str, Any]]
 

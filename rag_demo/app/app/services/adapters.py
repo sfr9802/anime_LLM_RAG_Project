@@ -1,40 +1,30 @@
 # services/adapters.py
 from typing import Any, Dict, List, Optional
-from domain.models.document_model import DocumentItem
-from infra.vector.metrics import to_similarity
+from ..domain.models.document_model import DocumentItem
+from ..infra.vector.metrics import to_similarity
 
-def flatten_chroma_result(res: Dict[str, Any], default_space: str = "cosine") -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    if not isinstance(res, dict):
+def flatten_chroma_result(res: Dict[str, Any]) -> List[Dict[str, Any]]:
+    ids = res.get("ids") or [[]]
+    docs = res.get("documents") or [[]]
+    metas = res.get("metadatas") or [[]]
+    dists = res.get("distances") or [[]]
+    space = (res.get("space") or "cosine").lower()  # chroma_store가 넣어줌  :contentReference[oaicite:2]{index=2}
+
+    out = []
+    if not ids or not ids[0]:
         return out
 
-    space = (res.get("space") or default_space).lower()
-
-    ids       = res.get("ids", [[]])
-    docs      = res.get("documents", [[]])
-    metas     = res.get("metadatas", [[]])
-    distances = res.get("distances", [[]])
-
-    ids       = ids[0] if isinstance(ids, list) and ids else []
-    docs      = docs[0] if isinstance(docs, list) and docs else []
-    metas     = metas[0] if isinstance(metas, list) and metas else []
-    distances = distances[0] if isinstance(distances, list) and distances else []
-
-    length = len(ids)  # ← 핵심: ids 기준으로 고정
-    for i in range(length):
-        _id  = ids[i]
-        _doc = docs[i] if i < len(docs) else ""
-        _met = metas[i] if i < len(metas) else {}
-        _dst = distances[i] if i < len(distances) else None
-
+    for i in range(len(ids[0])):
+        distance = dists[0][i] if dists and dists[0] and i < len(dists[0]) else None
         out.append({
-            "id": _id,
-            "text": _doc,
-            "metadata": _met if isinstance(_met, dict) else {},
-            "distance": _dst,
-            "score": to_similarity(_dst, space),
-            "space": space,
+            "id": ids[0][i],
+            "text": docs[0][i] if docs and docs[0] and i < len(docs[0]) else None,
+            "metadata": metas[0][i] if metas and metas[0] and i < len(metas[0]) else {},
+            "distance": distance,
+            "score": to_similarity(distance, space=space),  # ← 공식 변환  :contentReference[oaicite:3]{index=3}
         })
+    # 유사도 내림차순
+    out.sort(key=lambda x: (x["score"] is not None, x["score"]), reverse=True)
     return out
 
 def to_docitem(hit: Any) -> DocumentItem:

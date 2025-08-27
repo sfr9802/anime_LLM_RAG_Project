@@ -1,17 +1,17 @@
 # api/debug.py
-from fastapi import APIRouter, Query, Body
+from fastapi import APIRouter, Query, Body, Header
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional, Literal
-from services.retrieval_service import retrieve as svc_retrieve
-from services.eval_service import evaluate_hit as svc_evaluate_hit
+from ..services.retrieval_service import retrieve as svc_retrieve
+from ..services.eval_service import evaluate_hit as svc_evaluate_hit
 
 # ▼ 추가 import
-from services.search_service import SearchService
-from services.rag_service import RagService
-from rag_demo.app.app.infra.llm.clients.local_http_client import chat
-from configure import config
-from infra.llm.provider import get_chat
-from configure import config
+from ..services.search_service import SearchService
+from ..services.rag_service import RagService
+from ..infra.llm.clients.local_http_client import chat
+from ..configure import config
+from ..infra.llm.provider import get_chat
+
 router = APIRouter(prefix="/debug", tags=["debug"])
 
 # 기존 그대로
@@ -47,11 +47,10 @@ def debug_eval_hit(req: EvalReq = Body(...)):
 
 @router.get("/ping-llm")
 async def ping_llm():
-    chat = get_chat()
-    msg = [{"role":"user","content":"한 줄로만 대답해."}]
-    out = await chat(msg, max_tokens=32, temperature=0.2)
+    provider = get_chat()
+    out = await provider([{"role":"user","content":"한 줄로만 대답해."}], max_tokens=32, temperature=0.2)
     used_model = {
-        "local-http": config.LOCAL_LLM_MODEL,
+        "local-http": config.LLM_BASE_URL,
         "local-inproc": "llama-cpp-local",
         "openai": config.OPENAI_MODEL,
     }[config.LLM_PROVIDER]
@@ -72,14 +71,14 @@ async def debug_rag_ask(req: RagAskIn):
     docs = _rag.retrieve_docs(req.q, section=req.section, top_k=req.k)
     context = _rag.build_context(docs)
     if not context:
-        return {"answer": "컨텍스트가 없어 답변 생성을 생략한다.", "sources": [], "model": config.LLM_MODEL}
+        return {"answer": "컨텍스트가 없어 답변 생성을 생략한다.", "sources": [], "model": config.LLM_BASE_URL}
 
     prompt = _rag._render_prompt(req.q, context)
     messages = [
         {"role": "system", "content": "답변은 한국어. 제공된 컨텍스트만 사용. 모르면 모른다고 답하라."},
         {"role": "user", "content": prompt},
     ]
-    out = await chat(messages, model=config.LLM_MODEL, max_tokens=req.max_tokens, temperature=req.temperature)
+    out = await chat(messages, model=config.LLM_BASE_URL, max_tokens=req.max_tokens, temperature=req.temperature)
 
     # 소스 요약
     sources: List[Dict[str, Any]] = []
@@ -101,3 +100,20 @@ async def debug_rag_ask(req: RagAskIn):
             "prompt": prompt[:req.preview_chars],
         }
     }
+@router.get("/retrieve")
+def debug_retrieve(
+    q: str = Query(..., min_length=1),
+    k: int = Query(6, ge=1, le=100),
+    include_docs: bool = Query(False),
+    where: dict | None = Query(None),
+    candidate_k: int | None = Query(None, ge=1, le=200),
+    use_rerank: bool = Query(False),
+    use_mmr: bool = Query(False),
+    x_trace_id: str | None = Header(default=None),
+):
+    return svc_retrieve(
+        q=q, k=k, include_docs=include_docs,
+        where=where, candidate_k=candidate_k,
+        use_rerank=use_rerank, use_mmr=use_mmr,
+        trace_id=x_trace_id,
+    )

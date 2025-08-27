@@ -5,8 +5,8 @@ from uuid import uuid4
 from typing import Dict, Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
 from pydantic import BaseModel, Field
-
-from services.ingest_v2_service import ingest_v2_jsonl
+import datetime
+from ..services.ingest_v2_service import ingest_v2_jsonl
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
@@ -66,3 +66,25 @@ def ingest_status(job_id: str, x_admin_token: str | None = Header(default=None))
     if not job:
         raise HTTPException(404, "job not found")
     return job
+
+
+def _auth(x_admin_token: str | None):
+    if not ADMIN_TOKEN:
+        raise HTTPException(503, "admin is not configured")  # or 401
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(401, "invalid admin token")
+
+def _run(job_id: str, req: IngestReq):
+    _jobs[job_id].update({"started_at": datetime.utcnow().isoformat(), "progress": 0})
+    try:
+        # ingest_v2_jsonl(...) 콜백/진행률 훅이 있으면 연결:
+        # for p in ingest_v2_jsonl(..., on_progress=lambda pct: _jobs[job_id].update({"progress": pct})):
+        res = ingest_v2_jsonl( ... )
+        _jobs[job_id].update({"status":"done","result":res,"progress":100,"finished_at":datetime.utcnow().isoformat()})
+    except Exception as e:
+        _jobs[job_id].update({
+            "status":"error",
+            "error": f"{type(e).__name__}: {e}",
+            "traceback": traceback.format_exc(),
+            "finished_at": datetime.utcnow().isoformat()
+        })
