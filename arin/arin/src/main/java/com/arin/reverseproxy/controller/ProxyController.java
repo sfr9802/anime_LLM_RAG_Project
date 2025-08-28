@@ -1,31 +1,35 @@
+// src/main/java/com/arin/reverseproxy/api/ProxyController.java
 package com.arin.reverseproxy.controller;
 
 import com.arin.reverseproxy.dto.ProxyRequestDto;
+import com.arin.reverseproxy.dto.RagAskDto;
 import com.arin.reverseproxy.service.ProxyService;
-import com.arin.reverseproxy.service.ReverseProxyService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
+@RequestMapping("/proxy")
 @RequiredArgsConstructor
-@RequestMapping("${proxy.prefix:/api/proxy}")
 public class ProxyController {
 
-    private final ReverseProxyService reverseProxyService; // 일반 프록시
-    private final ProxyService proxyService;               // LLM 전용
+    private final ProxyService proxyService;
 
-    @PostMapping("/llm")
-    public ResponseEntity<?> proxyToLlm(@RequestBody ProxyRequestDto dto, Authentication auth) {
+    // v1 하위호환
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/ask")
+    public ResponseEntity<?> askV1(@RequestBody ProxyRequestDto dto, Authentication auth) {
         return proxyService.forward(dto, auth);
     }
 
-    @RequestMapping("/**")
-    public ResponseEntity<byte[]> proxy(HttpServletRequest req,
-                                        Authentication auth,
-                                        @RequestBody(required = false) byte[] body) {
-        return reverseProxyService.forward(req, auth, body);
+    // v2 확장 파라미터
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/ask-v2")
+    public ResponseEntity<?> askV2(@Valid @RequestBody RagAskDto dto, Authentication auth) {
+        return proxyService.forwardAskV2(dto, auth);
     }
 }

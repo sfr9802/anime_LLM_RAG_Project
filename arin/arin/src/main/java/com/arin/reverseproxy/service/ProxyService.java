@@ -3,6 +3,9 @@ package com.arin.reverseproxy.service;
 import com.arin.auth.oauth.CustomOAuth2User;
 import com.arin.reverseproxy.dto.ProxyRequestDto;
 import com.arin.reverseproxy.dto.ProxyResponseDto;
+import com.arin.reverseproxy.dto.RagAskDto;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -11,6 +14,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.util.*;
@@ -20,107 +24,155 @@ import java.util.*;
 public class ProxyService {
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper om = new ObjectMapper();
 
-    @Value("${proxy.upstream:http://fastapi:8000}") // 고정 업스트림(화이트리스트)
+    @Value("${proxy.upstream:http://fastapi:9000}")
     private String upstreamBase;
 
-    /** POST 프록시 (DTO 기반) */
+    @Value("${proxy.allowed-path-prefixes:/rag/}")
+    private String allowedPathPrefixes;
+
+    // ---------- v1: 기존 DTO 경로(하위호환) ----------
     public ResponseEntity<?> forward(ProxyRequestDto dto, Authentication auth) {
-        // 0) 대상 URL 생성 (path 우선, 없으면 targetUrl 호환)
-        String target = buildTargetUrl(dto);
-        if (!isAllowed(target)) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("bad target: only " + upstreamBase + " is allowed");
+        // 인증 체크는 컨트롤러 @PreAuthorize("isAuthenticated()")에서 처리
+
+        URI target = buildTargetUriV1(dto);
+        if (isForbiddenHost(target) || isForbiddenPath(target.getPath())) {
+            return ResponseEntity.badRequest().body("forbidden target: " + target);
         }
 
-        // 1) 헤더 구성
+        HttpHeaders headers = buildBaseHeaders(auth, UUID.randomUUID().toString());
+        Map<String, Object> body = Map.of("question", dto.getQuestion());
+
+        return exchange(target, headers, body, dto.getQuestion());
+    }
+
+    // ---------- v2: RAG 파라미터 포함 ----------
+    public ResponseEntity<?> forwardAskV2(RagAskDto dto, Authentication auth) {
+        // 인증 체크는 컨트롤러 @PreAuthorize("isAuthenticated()")에서 처리
+
+        URI target = buildTargetUriV2(dto);
+        if (isForbiddenHost(target) || isForbiddenPath(target.getPath())) {
+            return ResponseEntity.badRequest().body("forbidden target: " + target);
+        }
+
+        HttpHeaders headers = buildBaseHeaders(auth,
+                dto.getTraceId() != null ? dto.getTraceId() : UUID.randomUUID().toString());
+        Map<String, Object> body = Map.of("question", dto.getQuestion());
+
+        return exchange(target, headers, body, dto.getQuestion());
+    }
+
+    // ---------- 공통 헬퍼 ----------
+    private ResponseEntity<?> exchange(URI target, HttpHeaders headers, Map<String, Object> body, String originalQuestion) {
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+        try {
+            ResponseEntity<String> rs = restTemplate.exchange(target, HttpMethod.POST, entity, String.class);
+            // 가능하면 축약 DTO로, 아니면 raw
+            try {
+                JsonNode root = (rs.getBody() != null) ? om.readTree(rs.getBody()) : null;
+                String question = (root != null && root.hasNonNull("question"))
+                        ? root.get("question").asText()
+                        : originalQuestion;
+                String answer = (root != null && root.hasNonNull("answer"))
+                        ? root.get("answer").asText()
+                        : rs.getBody();
+                return ResponseEntity.status(rs.getStatusCode())
+                        .body(new ProxyResponseDto(question, answer));
+            } catch (Exception ignore) {
+                return ResponseEntity.status(rs.getStatusCode()).body(rs.getBody());
+            }
+        } catch (RestClientResponseException e) {
+            return new ResponseEntity<>(
+                    e.getResponseBodyAsString(),
+                    e.getResponseHeaders() != null ? e.getResponseHeaders() : new HttpHeaders(),
+                    e.getStatusCode()
+            );
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("LLM Proxy Error: " + e.getMessage());
+        }
+    }
+
+    private HttpHeaders buildBaseHeaders(Authentication auth, String traceId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
-        // 1-1) Spring이 검증한 토큰을 FastAPI로 패스스루
+        // auth가 null이어도 안전하게 (이상 상황 대비; 정상 경로는 @PreAuthorize가 보장)
         String bearer = extractBearer(auth);
-        if (bearer != null) {
-            headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + bearer);
-        }
+        if (bearer != null) headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + bearer);
 
-        // 1-2) (선택) 내부 추적용 사용자 헤더 — 있으면 추가, 없으면 생략
+        headers.addIfAbsent("X-Trace-Id", traceId);
+
         Object principal = (auth != null) ? auth.getPrincipal() : null;
         if (principal instanceof CustomOAuth2User u) {
             headers.set("X-User-Id", String.valueOf(u.getId()));
             if (u.getRole() != null) headers.set("X-User-Role", u.getRole());
         }
+        return headers;
+    }
 
-        // 2) 바디 구성 — 기존 호환: {"question": "..."}
-        Map<String, Object> bodyMap = new HashMap<>();
-        if (dto.getQuestion() != null) bodyMap.put("question", dto.getQuestion());
-        // 필요하면 dto.getPayload() 같은 필드로 확장
+    private URI buildTargetUriV1(ProxyRequestDto dto) {
+        if (dto.getTargetUrl() != null && !dto.getTargetUrl().isBlank()) {
+            return URI.create(dto.getTargetUrl());
+        }
+        String base = rstrip(upstreamBase);
+        String path = (dto.getPath() != null && !dto.getPath().isBlank()) ? dto.getPath() : "/rag/ask";
+        if (!path.startsWith("/")) path = "/" + path;
+        return UriComponentsBuilder.fromUriString(base + path).build(true).toUri();
+    }
 
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(bodyMap, headers);
+    private URI buildTargetUriV2(RagAskDto dto) {
+        String base = rstrip(upstreamBase);
+        String path = (dto.getPath() != null && !dto.getPath().isBlank()) ? dto.getPath() : "/rag/ask";
+        if (!path.startsWith("/")) path = "/" + path;
 
-        // 3) 업스트림 호출 및 결과 포워딩
+        UriComponentsBuilder b = UriComponentsBuilder.fromUriString(base + path);
+        // FastAPI는 쿼리스트링으로 받는 파라미터들
+        if (dto.getK() != null) b.queryParam("k", dto.getK());
+        if (dto.getCandidateK() != null) b.queryParam("candidate_k", dto.getCandidateK());
+        if (dto.getUseMmr() != null) b.queryParam("use_mmr", dto.getUseMmr());
+        if (dto.getLam() != null) b.queryParam("lam", dto.getLam());
+        if (dto.getMaxTokens() != null) b.queryParam("max_tokens", dto.getMaxTokens());
+        if (dto.getTemperature() != null) b.queryParam("temperature", dto.getTemperature());
+        if (dto.getPreviewChars() != null) b.queryParam("preview_chars", dto.getPreviewChars());
+        return b.build(true).toUri();
+    }
+
+    private boolean isForbiddenHost(URI target) {
         try {
-            ResponseEntity<ProxyResponseDto> rs = restTemplate.exchange(
-                    target, HttpMethod.POST, entity, ProxyResponseDto.class
-            );
-            // 응답 그대로 전달
-            return ResponseEntity.status(rs.getStatusCode())
-                    .headers(rs.getHeaders())
-                    .body(rs.getBody());
-        } catch (RestClientResponseException e) {
-            // 업스트림 4xx/5xx는 상태/헤더/바디 그대로 넘김
-            HttpHeaders eh = (e.getResponseHeaders() != null) ? e.getResponseHeaders() : new HttpHeaders();
-            return new ResponseEntity<>(e.getResponseBodyAsByteArray(), eh, e.getStatusCode());
+            URI base = URI.create(rstrip(upstreamBase));
+            String ts = nvl(target.getScheme()), bs = nvl(base.getScheme());
+            String th = nvl(target.getHost()),   bh = nvl(base.getHost());
+            int tp = portOrDefault(target),      bp = portOrDefault(base);
+            // 허용조건을 만족하지 않으면 금지
+            return !(ts.equalsIgnoreCase(bs) && th.equalsIgnoreCase(bh) && tp == bp);
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(("LLM Proxy Error: " + e.getMessage()));
+            return true; // 파싱 실패 == 금지
         }
     }
 
-    /** dto.path가 있으면 base + path, 아니면 (레거시) dto.targetUrl 사용 */
-    private String buildTargetUrl(ProxyRequestDto dto) {
-        String base = normalizeBase(upstreamBase);
-        String path = (dto.getPath() != null && !dto.getPath().isBlank())
-                ? (dto.getPath().startsWith("/") ? dto.getPath() : "/" + dto.getPath())
-                : null;
-
-        if (path != null) return base + path;
-
-        // 레거시 호환: targetUrl 허용하되 허용 도메인만
-        return dto.getTargetUrl();
-    }
-
-    /** 업스트림 호스트/포트 화이트리스트 */
-    private boolean isAllowed(String target) {
-        try {
-            URI t = URI.create(target);
-            URI b = URI.create(normalizeBase(upstreamBase));
-            String ts = safe(t.getScheme()), bs = safe(b.getScheme());
-            String th = safe(t.getHost()),   bh = safe(b.getHost());
-            int tp = portOrDefault(t),       bp = portOrDefault(b);
-            return ts.equalsIgnoreCase(bs) && th.equalsIgnoreCase(bh) && tp == bp;
-        } catch (Exception e) {
-            return false;
+    private boolean isForbiddenPath(String path) {
+        if (path == null) return true;
+        for (String pref : allowedPathPrefixes.split(",")) {
+            String p = pref.trim();
+            if (!p.isEmpty() && path.startsWith(p)) return false; // 허용 prefix 발견 → 금지 아님
         }
+        return true; // 어떤 허용 prefix에도 해당 안 되면 금지
     }
 
-    private String extractBearer(Authentication auth) {
+    private static String extractBearer(Authentication auth) {
         if (auth instanceof JwtAuthenticationToken jwt) {
-            return jwt.getToken().getTokenValue(); // 원본 Access Token
+            return jwt.getToken().getTokenValue();
         }
         return null;
     }
 
-    private static String normalizeBase(String s) {
-        if (s == null) return "";
-        return s.endsWith("/") ? s.substring(0, s.length() - 1) : s;
-    }
-
-    private static String safe(String s) { return (s == null) ? "" : s; }
-
+    private static String rstrip(String s) { return (s != null && s.endsWith("/")) ? s.substring(0, s.length()-1) : s; }
+    private static String nvl(String s) { return (s == null) ? "" : s; }
     private static int portOrDefault(URI u) {
         int p = u.getPort();
         if (p != -1) return p;
-        String scheme = safe(u.getScheme()).toLowerCase(Locale.ROOT);
-        return "https".equals(scheme) ? 443 : 80;
+        return "https".equals(nvl(u.getScheme()).toLowerCase(Locale.ROOT)) ? 443 : 80;
     }
 }

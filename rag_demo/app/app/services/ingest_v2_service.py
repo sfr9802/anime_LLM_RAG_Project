@@ -5,12 +5,12 @@ import json, hashlib, time
 from pymongo import UpdateOne
 from pymongo.errors import PyMongoError
 
-from configure import config
-from domain.embeddings import embed_passages  # 반환: np.ndarray 또는 list 지원 권장
-from infra.vector.chroma_store import upsert as chroma_upsert
-from infra.mongo.mongo_client import get_db  # db = get_db()
+from ..configure import config
+from ..domain.embeddings import embed_passages  # 반환: np.ndarray 또는 list 지원 권장
+from ..infra.vector.chroma_store import upsert as chroma_upsert
+from ..infra.mongo.mongo_client import get_db  # db = get_db()
 
-from domain.chunker import window_by_chars
+from ..domain.chunker import window_by_chars
 
 def _stable_id(doc_id: str, section: str, i: int, text: str) -> str:
     h = hashlib.md5(f"{doc_id}|{section}|{i}|{text}".encode("utf-8")).hexdigest()[:24]
