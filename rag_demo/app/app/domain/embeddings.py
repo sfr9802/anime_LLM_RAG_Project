@@ -226,3 +226,35 @@ def switch_backend(backend: str, model: Optional[str] = None, dim: Optional[int]
 class EmbedAdapter:
     def embed(self, texts: List[str]) -> List[List[float]]:
         return embed_passages(texts, as_list=True)  # 문서(패시지) 기준
+class ChromaEmbedding:
+    """
+    Chroma 0.5+ 호환 임베딩 어댑터.
+    - name(): 식별자
+    - embed_documents(texts): List[List[float]]
+    - embed_query(text): List[float]
+    - __call__(texts): List[List[float]]  (호환용)
+    """
+    def __init__(self, name: Optional[str] = None):
+        # 너무 긴 모델명 줄이기
+        mdl = EMBED_MODEL.rsplit("/", 1)[-1]
+        self._name = name or f"{_BACKEND}:{mdl}"
+
+    def name(self) -> str:
+        return self._name
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return embed_passages(texts, as_list=True)  # passage prefix/정규화 포함
+
+    def embed_query(self, text: str) -> List[float]:
+        return embed_queries([text], as_list=True)[0]  # query prefix/정규화 포함
+
+    # 일부 버전은 __call__도 참조하므로 넣어줌
+    def __call__(self, texts: List[str]) -> List[List[float]]:
+        return self.embed_documents(texts)
+
+def build_embedding_fn() -> ChromaEmbedding:
+    """
+    chroma_store에서 import해서 쓰는 엔트리포인트.
+    """
+    _ensure_loaded()  # 모델 로드 / 차원 확정
+    return ChromaEmbedding()

@@ -21,7 +21,7 @@ public class ReverseProxyService {
 
     private final RestTemplate proxyRestTemplate;
 
-    @Value("${proxy.upstream:http://fastapi:8000}")
+    @Value("${proxy.upstream:http://fastapi:9000}")
     private String upstreamBase;
 
     // 전달 금지 헤더(소문자 비교)

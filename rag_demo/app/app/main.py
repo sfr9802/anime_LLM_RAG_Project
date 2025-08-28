@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from .security.auth_middleware import AuthOnlyMiddleware
-from .api import query_router, search_router, debug_router, admin_ingest_router
+from .api import query_router, search_router, debug_router, admin_ingest_router, rag_router
 
 app = FastAPI()
 
@@ -17,6 +17,7 @@ app.include_router(query_router.router)
 app.include_router(search_router.router)
 app.include_router(debug_router.router)
 app.include_router(admin_ingest_router.router)
+app.include_router(rag_router)
 
 @app.get("/health")
 def health():

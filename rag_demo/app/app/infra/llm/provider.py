@@ -1,23 +1,120 @@
-from __future__ import annotations
-from typing import Callable, Awaitable, Dict, List
-from app.app.configure import config
 
-# 각 클라이언트의 chat 함수를 가져오지 않고 지연 import로 의존 최소화
+from __future__ import annotations
+from typing import Optional, List, Dict, Awaitable, Callable
+import httpx
+
+# Try both import paths to match your codebase
+try:
+    from app.app.configure import config  # modern path
+except Exception:  # fallback
+    try:
+        from configure import config  # e.g. `from configure import config`
+    except Exception:
+        from configure.config import config  # e.g. `from configure.config import config`
+
+# --- Simple interface ---
+class LLMClient:
+    async def chat(self, messages: List[Dict[str, str]], *, model: Optional[str] = None,
+                   max_tokens: int = 512, temperature: float = 0.2) -> str:
+        raise NotImplementedError
+
+# --- HTTP (OpenAI-compatible: OpenAI / vLLM / llama.cpp server) ---
+class _OpenAIHTTPClient(LLMClient):
+    def __init__(self, http: httpx.AsyncClient, *, base_url: str,
+                 api_key: Optional[str], default_model: Optional[str], timeout: float = 60.0):
+        self._http, self._base_url, self._api_key, self._default_model, self._timeout = (
+            http, base_url.rstrip("/"), api_key, default_model, timeout
+        )
+
+    async def chat(self, messages: List[Dict[str, str]], *, model: Optional[str] = None,
+                   max_tokens: int = 512, temperature: float = 0.2) -> str:
+        used_model = model or self._default_model
+        if not used_model:
+            raise RuntimeError("LLM model is not set (LLM_MODEL / OPENAI_MODEL / LOCAL_LLM_MODEL).")
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        payload = {
+            "model": used_model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        r = await self._http.post(f"{self._base_url}/v1/chat/completions", json=payload, headers=headers, timeout=self._timeout)
+        r.raise_for_status()
+        j = r.json()
+        return j["choices"][0]["message"]["content"]
+
+# --- In-process (llama-cpp-python) ---
+class _InprocClient(LLMClient):
+    _llm = None
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def _get_llm(cls):
+        if cls._llm is None:
+            from llama_cpp import Llama
+            cls._llm = Llama(
+                model_path=getattr(config, "LLAMA_MODEL_PATH", None),
+                n_ctx=int(getattr(config, "LLAMA_CTX", 8192)),
+                n_gpu_layers=int(getattr(config, "LLAMA_N_GPU_LAYERS", 0)),
+                chat_format=str(getattr(config, "LLAMA_CHAT_FORMAT", "gemma")),
+                verbose=False,
+            )
+        return cls._llm
+
+    async def chat(self, messages: List[Dict[str, str]], *, model: Optional[str] = None,
+                   max_tokens: int = 512, temperature: float = 0.2) -> str:
+        import anyio
+        def _do():
+            out = self._get_llm().create_chat_completion(
+                messages=messages, max_tokens=max_tokens, temperature=temperature
+            )
+            return out["choices"][0]["message"]["content"]
+        return await anyio.to_thread.run_sync(_do)
+
+# --- Factory / DI helpers ---
+_http_singleton: Optional[httpx.AsyncClient] = None
+_client_singleton: Optional[LLMClient] = None
+
+def _normalize_provider(v: Optional[str]) -> str:
+    if not v:
+        return "openai"
+    v = v.strip().lower()
+    if v == "local-http":
+        return "local_http"
+    if v == "local-inproc":
+        return "local_inproc"
+    return v
+
+def build_client(async_http_client: httpx.AsyncClient | None = None) -> LLMClient:
+    provider = _normalize_provider(getattr(config, "LLM_PROVIDER", None))
+
+    if provider in ("openai", "local_http"):
+        base_url = getattr(config, "LLM_BASE_URL", None) or getattr(config, "OPENAI_BASE_URL", None)
+        if not base_url:
+            raise RuntimeError("LLM_BASE_URL (or OPENAI_BASE_URL) must be set for HTTP providers.")
+        api_key = getattr(config, "LLM_API_KEY", None) or getattr(config, "OPENAI_API_KEY", None)
+        model = getattr(config, "LLM_MODEL", None) or getattr(config, "LOCAL_LLM_MODEL", None) or getattr(config, "OPENAI_MODEL", None)
+        timeout = float(getattr(config, "LLM_TIMEOUT", 60.0) or getattr(config, "OPENAI_TIMEOUT", 60.0))
+        http = async_http_client or httpx.AsyncClient(base_url=base_url, timeout=timeout)
+        return _OpenAIHTTPClient(http, base_url=base_url, api_key=api_key, default_model=model, timeout=timeout)
+
+    if provider == "local_inproc":
+        return _InprocClient()
+
+    raise RuntimeError(f"Unknown LLM_PROVIDER: {provider}")
+
+async def get_client() -> LLMClient:
+    global _client_singleton, _http_singleton
+    if _client_singleton is None:
+        _client_singleton = build_client()
+    return _client_singleton
+
+# --- Legacy wrapper (keeps old call sites working) ---
 def get_chat() -> Callable[[List[Dict[str, str]], int, float], Awaitable[str]]:
-    prov = config.LLM_PROVIDER
-    if prov == "local-http":
-        from .clients.local_http_client import chat
-        return lambda messages, max_tokens=512, temperature=0.2: chat(
-            messages, model=config.LOCAL_LLM_MODEL, max_tokens=max_tokens, temperature=temperature
-        )
-    if prov == "local-inproc":
-        from .clients.local_inproc_client import chat
-        return lambda messages, max_tokens=512, temperature=0.2: chat(
-            messages, model=None, max_tokens=max_tokens, temperature=temperature
-        )
-    if prov == "openai":
-        from .clients.openAi_client import chat
-        return lambda messages, max_tokens=512, temperature=0.2: chat(
-            messages, model=config.OPENAI_MODEL, max_tokens=max_tokens, temperature=temperature
-        )
-    raise ValueError(f"Unknown LLM_PROVIDER: {prov}")
+    async def _call(messages: List[Dict[str, str]], max_tokens: int = 512, temperature: float = 0.2) -> str:
+        client = await get_client()
+        return await client.chat(messages, max_tokens=max_tokens, temperature=temperature)
+    return _call
