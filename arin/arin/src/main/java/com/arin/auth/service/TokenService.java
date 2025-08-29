@@ -8,6 +8,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.WeakKeyException;
 import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,11 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import org.springframework.http.ResponseCookie;
+import java.time.Duration;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -36,6 +42,7 @@ public class TokenService {
     private static final String REFRESH_PREFIX   = "refresh:";
     private static final String OTC_PREFIX       = "otc:";      // ✅ 1회용 코드
     private static final SecureRandom RNG        = new SecureRandom();
+    private static final String REFRESH_SESS_PREFIX = "refreshsess:"; // refreshsess:{uid}:{jti}
 
     // Lua 스크립트로 GET+DEL 원자 실행 (버전 의존성 회피)
     private static final DefaultRedisScript<String> GETDEL_SCRIPT =
@@ -89,11 +96,11 @@ public class TokenService {
 
     // ===== Refresh =====
 
-    public void storeRefreshToken(Long userId, String refreshToken, long ttlMillis) {
-        String key = REFRESH_PREFIX + userId;
-        redisTemplate.opsForValue().set(key, refreshToken, ttlMillis, TimeUnit.MILLISECONDS);
-        log.info("[JWT-REFRESH] 저장 | key={}, TTL={}ms", key, ttlMillis);
-    }
+//    public void storeRefreshToken(Long userId, String refreshToken, long ttlMillis) {
+//        String key = REFRESH_PREFIX + userId;
+//        redisTemplate.opsForValue().set(key, refreshToken, ttlMillis, TimeUnit.MILLISECONDS);
+//        log.info("[JWT-REFRESH] 저장 | key={}, TTL={}ms", key, ttlMillis);
+//    }
 
     public String getRefreshToken(Long userId) {
         return redisTemplate.opsForValue().get(REFRESH_PREFIX + userId);
@@ -166,4 +173,48 @@ public class TokenService {
             return hex.toString();
         } catch (Exception e) { throw new RuntimeException(e); }
     }
+    // 쿠키 빌더
+    public ResponseCookie buildRefreshCookie(String refreshToken, long ttlMillis) {
+        return ResponseCookie.from("refresh_token", refreshToken)
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(Duration.ofMillis(ttlMillis))
+                .build();
+    }
+    // 세션 저장
+    public void saveRefreshSession(Long userId, String jti, HttpServletRequest req, long ttlMillis) {
+        String ua = Optional.ofNullable(req.getHeader("User-Agent")).orElse("-");
+        String uaHash = sha256(ua);
+        String ip = Optional.ofNullable(req.getRemoteAddr()).orElse("0.0.0.0");
+        String ipPrefix = ip.substring(0, Math.min(7, ip.length())); // 대충 /24 비슷
+
+        String key = REFRESH_SESS_PREFIX + userId + ":" + jti;
+        String val = uaHash + "|" + ipPrefix;
+        redisTemplate.opsForValue().set(key, val, ttlMillis, TimeUnit.MILLISECONDS);
+    }
+    // 세션 소모
+    public boolean consumeRefreshSession(Long userId, String jti, HttpServletRequest req) {
+        String key = REFRESH_SESS_PREFIX + userId + ":" + jti;
+        String val = redisTemplate.opsForValue().get(key);
+        if (val == null) return false; // 재사용 감지(이미 쓰였거나 존재X)
+
+        String uaHashNow = sha256(Optional.ofNullable(req.getHeader("User-Agent")).orElse("-"));
+        String[] parts = val.split("\\|", 2);
+        boolean uaOk = parts.length > 0 && parts[0].equals(uaHashNow);
+
+        redisTemplate.delete(key); // 사용 즉시 폐기(회전)
+        return uaOk; // UA mismatch면 사실상 탈취 의심
+    }
+    // 사용자 전체 세션 폐기 (재사용 감지 시 호출)
+    public void revokeAllRefreshSessions(Long userId) {
+        Set<String> keys = redisTemplate.keys(REFRESH_SESS_PREFIX + userId + ":*");
+        if (!keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
+    }
+
+
+
 }
