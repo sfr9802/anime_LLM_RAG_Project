@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
@@ -25,7 +27,7 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
 
     private final JwtProvider jwtProvider;
     private final TokenService tokenService;
-    private final AppOAuthProps props; // app.oauth2.redirect-uri, allowed-origins
+    private final AppOAuthProps props; // redirect-uri, allowed-origins 등
 
     @Override
     public void onAuthenticationSuccess(HttpServletRequest req,
@@ -35,63 +37,57 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         Long userId = user.getId();
         String role  = user.getRole();
 
-        // 1) 토큰 발급 & refresh 저장
+        // 1) 토큰 발급
         String access  = jwtProvider.generateAccessToken(userId, role);
         String refresh = jwtProvider.generateRefreshToken(userId, role);
+
+        // 2) Refresh 회전/허용 등록 (TTL = refresh 만료까지)
         tokenService.storeRefreshToken(userId, refresh, jwtProvider.getRemainingValidity(refresh));
 
-        // 2) 1회용 코드(OTC) 발급 (60s 예시)
-        String code = tokenService.issueOneTimeCode(userId, access, refresh, 60);
+        // 3) Refresh를 HttpOnly 쿠키로 심기 (경로는 재발급/로그아웃 엔드포인트로 좁힘 권장: "/auth/")
+        var maxAgeSec = Math.max(0, (int) (jwtProvider.getRemainingValidity(refresh) / 1000));
+        ResponseCookie refreshCookie = ResponseCookie.from("REFRESH_TOKEN", refresh)
+                .httpOnly(true)
+                .secure(true)                // 배포는 반드시 HTTPS
+                .sameSite("Lax")             // 크로스오리진이면 "None" + CORS credentials=true 로 전환
+                .path("/auth/")              // 재발급/로그아웃에만 전송
+                .maxAge(maxAgeSec)
+                .build();
+        res.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());
 
-        // 3) 프론트에서 보냈던 state 에코백(있으면)
-        String state = req.getParameter("state");
-        Optional<String> stateOpt = Optional.ofNullable(state).filter(s -> !s.isBlank());
-
-        // 4) 리다이렉트 base 결정(세션/쿼리 ?front=…/설정값)
+        // 4) 프론트 리다이렉트 (토큰/코드 절대 싣지 않음)
         String base = pickRedirectBase(req, props);
-
-        // 5) 안전하게 URL 빌드 (★ 인코딩을 Builder에 맡긴다: build() / build(false))
-        String location = UriComponentsBuilder.fromHttpUrl(base)
-                .replaceQueryParam("code")                  // 혹시 기존 code 제거
-                .queryParam("code", code)                   // =, + 등 안전하게 인코딩됨
-                .queryParamIfPresent("state", stateOpt)
-                .build()                                    // ← build(true) 쓰지 마세요!
+        String location = UriComponentsBuilder.fromUriString(base)
+                .replaceQuery(null)      // 기존 쿼리 제거(혹시 모를 노출 방지)
+                .build()
                 .toUriString();
 
         log.info("[OAuth2] Success → redirect {}", location);
-
-        // 캐시 방지 + 302
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("Pragma", "no-cache");
         res.sendRedirect(location);
     }
 
-    /** 세션(frontRedirect) > 요청 ?front= > 설정값 순서로 선택, origin 화이트리스트 체크 */
+    /** 세션(frontRedirect) > 요청 ?front= > 설정값 순서 + origin 화이트리스트 */
     private static String pickRedirectBase(HttpServletRequest req, AppOAuthProps props) {
         String configured = Optional.ofNullable(props.getRedirectUri())
                 .filter(s -> !s.isBlank())
                 .orElse("http://localhost:5173/oauth/success-popup");
 
         String candidate = null;
-
         var session = req.getSession(false);
         if (session != null) {
             Object v = session.getAttribute("frontRedirect");
             if (v != null) {
                 candidate = v.toString();
-                session.removeAttribute("frontRedirect"); // 1회성
+                session.removeAttribute("frontRedirect");
             }
         }
-        if (candidate == null) {
-            candidate = req.getParameter("front");
-        }
+        if (candidate == null) candidate = req.getParameter("front");
 
-        return (isAllowedFront(candidate, props.getAllowedOrigins()))
-                ? candidate
-                : configured;
+        return (isAllowedFront(candidate, props.getAllowedOrigins())) ? candidate : configured;
     }
 
-    /** origin(스킴+호스트[:포트])만 비교해 화이트리스트 검사 */
     private static boolean isAllowedFront(String url, List<String> allowedOrigins) {
         if (url == null || url.isBlank() || allowedOrigins == null || allowedOrigins.isEmpty()) return false;
         try {
@@ -115,3 +111,4 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         }
     }
 }
+

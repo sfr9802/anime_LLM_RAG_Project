@@ -9,124 +9,171 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
-import java.util.Date;
-import java.util.Objects;
+import java.util.*;
 
 @Slf4j
 @Component
 public class JwtProvider {
 
-    @Value("${jwt.secret}")
-    private String secretRaw;
+    @Value("${jwt.secret}")                  private String secretRaw;            // Base64 권장
+    @Value("${jwt.expiration}")              private long  expirationMs;          // access TTL(ms)
+    @Value("${jwt.refresh-expiration}")      private long  refreshExpirationMs;   // refresh TTL(ms)
 
-    @Value("${jwt.expiration}") // Access Token 유효기간 (ms)
-    private long expirationMs;
-
-    @Value("${jwt.refresh-expiration}") // Refresh Token 유효기간 (ms)
-    private long refreshExpirationMs;
+    // 추가: 엄격 검증용
+    @Value("${jwt.issuer:arin}")             private String issuer;
+    @Value("${jwt.audience:frontend}")       private String audience;
+    @Value("${jwt.clock-skew-seconds:60}")   private long   clockSkewSeconds;
+    @Value("${jwt.kid:hmac-1}")              private String kid;                  // 키 롤테이션 대비
 
     private Key key;
+    private JwtParser parser;
 
     @PostConstruct
     public void init() {
-        this.key = Keys.hmacShaKeyFor(secretRaw.getBytes(StandardCharsets.UTF_8));
-        log.info("[JWT] 비밀키 초기화 완료");
+        byte[] keyBytes = tryBase64(secretRaw);
+        if (keyBytes == null) keyBytes = secretRaw.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < 32) {
+            throw new IllegalStateException("jwt.secret must be >= 256 bits (use a Base64-encoded 32B+ key)");
+        }
+        this.key = Keys.hmacShaKeyFor(keyBytes);
+
+        this.parser = Jwts.parserBuilder()
+                .setSigningKey(key)
+                .requireIssuer(issuer)
+                .requireAudience(audience)
+                .setAllowedClockSkewSeconds(clockSkewSeconds)
+                .build();
+
+        log.info("[JWT] 키/파서 초기화 완료 (alg=HS256, kid={})", kid);
     }
 
-    // 변경: 여러 역할 지원 + sub 추가
+    // ===== 발급 =====
     public String generateAccessToken(Long userId, String role) {
-        return generateToken(userId, java.util.List.of(role), expirationMs);
+        return buildToken(userId, roleList(role), expirationMs, "acc", UUID.randomUUID().toString());
     }
+
     public String generateRefreshToken(Long userId, String role) {
-        return generateToken(userId, java.util.List.of(role), refreshExpirationMs);
+        // refresh는 family 추적용 jti 필요. (TokenService에서 allow:{user}와 매칭)
+        return buildToken(userId, roleList(role), refreshExpirationMs, "ref", UUID.randomUUID().toString());
     }
 
-    public String generateToken(Long userId, java.util.Collection<String> roles, long ttlMillis) {
-        var rolesUpper = roles.stream()
-                .filter(Objects::nonNull)
-                .map(r -> r.trim().toUpperCase())
-                .filter(r -> !r.isEmpty())
-                .toList();
+    public String buildToken(Long userId, Collection<String> roles, long ttlMillis, String typ, String jti) {
+        List<String> normRoles = normalizeRoles(roles);
+        List<String> authorities = toAuthorities(normRoles);
 
-        var authorities = rolesUpper.stream()
-                .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
-                .toList();
+        long now = System.currentTimeMillis();
+        Date iat = new Date(now), exp = new Date(now + ttlMillis);
 
-        String token = Jwts.builder()
-                .setSubject(String.valueOf(userId))                 // ✅ sub 추가 (스프링 principal용)
+        return Jwts.builder()
+                .setHeaderParam("kid", kid)
+                .setIssuer(issuer)
+                .setAudience(audience)
+                .setSubject(String.valueOf(userId))     // sub = userId
                 .claim("userId", userId)
-                .claim("roles", rolesUpper)                         // ✅ CompositeJwtAuthConverter/FastAPI가 읽음
-                .claim("authorities", authorities)                  // ✅ 여분(스프링 ROLE_* 바로 인식)
-                // .claim("scope", List.of("read","write"))          // 필요 시
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + ttlMillis))
+                .claim("roles", normRoles)              // 배열로 고정
+                .claim("authorities", authorities)      // (스프링 ROLE_* 매핑용)
+                .claim("typ", typ)                      // "acc"|"ref"
+                .setId(jti)                             // 재사용 탐지/회전
+                .setIssuedAt(iat)
+                .setExpiration(exp)
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
-
-        log.info("[JWT] 토큰 생성 | sub={}, roles={}, TTL={}ms", userId, rolesUpper, ttlMillis);
-        return token;
     }
 
+    // ===== 파싱/검증 =====
     public Claims getClaims(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(key)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-            log.info("[JWT] 클레임 파싱 성공 | userId={}, role={}", claims.get("userId"), claims.get("role"));
-            return claims;
+            return parser.parseClaimsJws(token).getBody();
         } catch (JwtException e) {
-            log.warn("[JWT] 클레임 파싱 실패 | reason={}", e.getMessage());
+            log.warn("[JWT] 파싱/검증 실패: {}", e.getMessage());
             throw e;
         }
     }
 
-    public Long getUserId(String token) {
-        Object userId = getClaims(token).get("userId");
-
-        if (userId instanceof Integer) return ((Integer) userId).longValue();
-        if (userId instanceof Long) return (Long) userId;
-        if (userId instanceof String) return Long.parseLong((String) userId);
-
-        log.error("[JWT] userId 타입 비정상: {}", userId);
-        throw new IllegalArgumentException("Invalid userId type in JWT");
-    }
-
-    public String getRole(String token) {
-        return (String) getClaims(token).get("role");
-    }
-
     public boolean validateToken(String token) {
         try {
-            getClaims(token);
+            parser.parseClaimsJws(token);
             return true;
-        } catch (SecurityException e) {
-            log.warn("JWT 서명 오류: {}", e.getMessage());
-        } catch (MalformedJwtException e) {
-            log.warn("잘못된 JWT 형식: {}", e.getMessage());
-        } catch (ExpiredJwtException e) {
-            log.warn("JWT 만료됨: {}", e.getMessage());
-        } catch (UnsupportedJwtException e) {
-            log.warn("지원하지 않는 JWT: {}", e.getMessage());
-        } catch (IllegalArgumentException e) {
-            log.warn("JWT 문자열이 비어 있음: {}", e.getMessage());
+        } catch (JwtException | IllegalArgumentException e) {
+            log.warn("[JWT] 유효하지 않은 토큰: {}", e.getMessage());
+            return false;
         }
-        return false;
     }
 
     public long getRemainingValidity(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(key)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            return claims.getExpiration().getTime() - System.currentTimeMillis();
+            Date exp = getClaims(token).getExpiration();
+            return exp.getTime() - System.currentTimeMillis();
         } catch (Exception e) {
-            log.error("토큰 만료 시간 계산 실패: {}", e.getMessage());
+            log.error("[JWT] 남은 TTL 계산 실패: {}", e.getMessage());
             return -1;
         }
+    }
+
+    // ===== 편의 메서드 =====
+    public Long getUserId(String token) {
+        try {
+            Claims c = getClaims(token);
+            String sub = c.getSubject();
+            if (sub != null) return Long.parseLong(sub);
+            Object uid = c.get("userId");
+            if (uid instanceof Integer i) return i.longValue();
+            if (uid instanceof Long l)    return l;
+            if (uid instanceof String s)  return Long.parseLong(s);
+        } catch (Exception ignored) {}
+        throw new IllegalArgumentException("Invalid userId in JWT");
+    }
+
+    /** 단일 role 대신 다중 roles를 사용하세요. */
+    @Deprecated
+    public String getRole(String token) {
+        List<String> roles = getRoles(token);
+        return roles.isEmpty() ? null : roles.get(0);
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<String> getRoles(String token) {
+        Object v = getClaims(token).get("roles");
+        if (v instanceof List<?> list) {
+            List<String> out = new ArrayList<>(list.size());
+            for (Object o : list) if (o != null) out.add(o.toString());
+            return normalizeRoles(out);
+        }
+        return List.of();
+    }
+
+    public String getType(String token) {
+        Object t = getClaims(token).get("typ");
+        return (t == null) ? null : t.toString();
+    }
+
+    // ===== 내부 유틸 =====
+    private static byte[] tryBase64(String s) {
+        try { return Base64.getDecoder().decode(s); }
+        catch (IllegalArgumentException e) { return null; }
+    }
+
+    private static List<String> roleList(String role) {
+        return (role == null) ? List.of() : List.of(role);
+    }
+
+    private static List<String> normalizeRoles(Collection<String> roles) {
+        List<String> out = new ArrayList<>();
+        if (roles == null) return out;
+        for (String r : roles) {
+            if (r == null) continue;
+            String v = r.trim();
+            if (v.isEmpty()) continue;
+            out.add(v.toUpperCase(Locale.ROOT));
+        }
+        return out;
+    }
+
+    private static List<String> toAuthorities(List<String> roles) {
+        List<String> out = new ArrayList<>(roles.size());
+        for (String r : roles) {
+            out.add(r.startsWith("ROLE_") ? r : "ROLE_" + r);
+        }
+        return out;
     }
 }
