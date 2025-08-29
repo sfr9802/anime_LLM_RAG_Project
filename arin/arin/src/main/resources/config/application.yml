@@ -38,7 +38,10 @@ app:
     redirect-uri: http://localhost:5173/oauth/success-popup
     allowed-origins:
       - http://localhost:5173
-
+logging:
+  level:
+    org.springframework.security: DEBUG
+    org.springframework.web: INFO
 springdoc:
   swagger-ui:
     enabled: false

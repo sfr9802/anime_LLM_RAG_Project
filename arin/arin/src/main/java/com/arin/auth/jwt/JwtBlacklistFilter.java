@@ -7,6 +7,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -20,50 +23,64 @@ public class JwtBlacklistFilter extends OncePerRequestFilter {
 
     private final TokenService tokenService;
 
-    // 공개 패스(무조건 통과)
+    // 무조건 통과할 prefix
     private static final Set<String> PUBLIC_PREFIXES = Set.of(
-            "/api/auth/", "/swagger-ui", "/v3/api-docs"
+            "/api/auth/",           // 네 로그인/리프레시/로그아웃 라인
+            "/oauth2/",             // OAuth2 엔드포인트
+            "/login/oauth2/code/",  // OAuth2 콜백
+            "/swagger-ui",
+            "/v3/api-docs",
+            "/actuator/health",
+            "/error"
     );
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest req) {
+        String path = req.getRequestURI();
+        if (HttpMethod.OPTIONS.matches(req.getMethod())) return true;
+        for (String p : PUBLIC_PREFIXES) {
+            if (path.startsWith(p)) return true;
+        }
+        return false;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws IOException, ServletException {
 
-        final String path = req.getRequestURI();
-
-        // 1) 프리플라이트/공개 경로는 무조건 통과
-        if ("OPTIONS".equalsIgnoreCase(req.getMethod()) || isPublic(path)) {
-            chain.doFilter(req, res);
-            return;
-        }
-
-        // 2) 토큰 없으면 통과(인증 필요한 엔드포인트는 뒤에서 401 처리)
-        String auth = req.getHeader("Authorization");
-        if (auth == null || !auth.startsWith("Bearer ")) {
+        // 토큰 없으면 통과 (뒤 단계에서 인증 실패 처리)
+        String auth = req.getHeader(HttpHeaders.AUTHORIZATION);
+        if (auth == null || !startsWithBearer(auth)) {
             chain.doFilter(req, res);
             return;
         }
 
         String token = auth.substring(7).trim();
         if (!token.isEmpty() && tokenService.isBlacklisted(token)) {
-            log.warn("[BLACKLIST] blocked path={} ip={} ua={}",
-                    path, req.getRemoteAddr(), req.getHeader("User-Agent"));
+            // 로깅: 프록시 환경이면 X-Forwarded-For 우선
+            String ip = headerOr(req, "X-Forwarded-For", req.getRemoteAddr());
+            log.warn("[BLACKLIST] blocked path={} ip={} ua={}", req.getRequestURI(), ip, headerOr(req, "User-Agent", "-"));
 
             res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            res.setContentType("application/json; charset=UTF-8");
+            res.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            res.setCharacterEncoding("UTF-8");
             res.setHeader("Cache-Control", "no-store");
             res.setHeader("Pragma", "no-cache");
             res.getWriter().write("{\"error\":\"로그아웃된 토큰입니다.\"}");
+            res.getWriter().flush();
             return;
         }
 
         chain.doFilter(req, res);
     }
 
-    private boolean isPublic(String path) {
-        for (String p : PUBLIC_PREFIXES) {
-            if (path.startsWith(p)) return true;
-        }
-        return false;
+    private static boolean startsWithBearer(String v) {
+        // "Bearer " 대/소문자 관대 처리
+        return v.regionMatches(true, 0, "Bearer ", 0, 7);
+    }
+
+    private static String headerOr(HttpServletRequest req, String name, String def) {
+        String v = req.getHeader(name);
+        return (v == null || v.isBlank()) ? def : v;
     }
 }
