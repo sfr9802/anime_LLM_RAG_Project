@@ -1,40 +1,33 @@
-// libs/axios.ts
 import axios, { type InternalAxiosRequestConfig } from "axios";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+// 쿠키 기반 리프레시를 위해 전역으로 허용해도 됨(쿠키 Path=/auth/라서 다른 경로엔 안 붙음)
+const instance = axios.create({ baseURL: API_BASE, withCredentials: true });
+
 type RetriableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-const instance = axios.create({ baseURL: API_BASE });
-
-// --- 토큰 스토리지 util ---
+// --- 토큰 스토리지 (Access만) ---
 const tokenStore = {
   getAccess() { return localStorage.getItem("accessToken"); },
-  getRefresh() { return localStorage.getItem("refreshToken"); },
-  set(access: string, refresh?: string) {
-    localStorage.setItem("accessToken", access);
-    if (refresh) localStorage.setItem("refreshToken", refresh);
-  },
-  clear() {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-  },
+  set(access: string) { localStorage.setItem("accessToken", access); },
+  clear() { localStorage.removeItem("accessToken"); },
 };
 
-// --- Error 래퍼 (S6671 대응) ---
+// --- Error 래퍼 ---
 function toError(x: unknown): Error {
   if (x instanceof Error) return x;
   if (typeof x === "string") return new Error(x);
   try { return new Error(JSON.stringify(x)); } catch { return new Error("Request failed"); }
 }
 
-// URL 또는 상대경로에서 pathname만 안전하게 뽑기
+// pathname만 안전 추출
 function resolvePath(raw: string): string {
   try { return new URL(raw, API_BASE || window.location.origin).pathname; }
   catch { return raw; }
 }
 
-// 로그인 리다이렉트 중복 방지 플래그
+// 로그인 리다이렉트 중복 방지
 let redirectingToLogin = false;
 function goLoginOnce() {
   if (window.location.pathname === "/login") return;
@@ -43,7 +36,7 @@ function goLoginOnce() {
   window.location.href = "/login";
 }
 
-// --- 요청 인터셉터: access 자동 주입 ---
+// --- 요청 인터셉터: Access 자동 주입 ---
 instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const access = tokenStore.getAccess();
 
@@ -56,44 +49,47 @@ instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (!isAuthEndpoint && access) {
     config.headers = config.headers ?? {};
     (config.headers as Record<string, string>).Authorization = `Bearer ${access}`;
+  } else if (isAuthEndpoint) {
+    // auth 엔드포인트엔 Authorization 헤더를 넣지 않음(특히 /refresh)
+    if (config.headers && "Authorization" in config.headers) {
+      delete (config.headers as Record<string, string>).Authorization;
+    }
+    // 쿠키 기반 호출을 위해 보장
+    (config as any).withCredentials = true;
   }
   return config;
 });
 
-// --- 401 동시성 제어용 큐 ---
+// --- 401 동시성 제어 ---
 let isRefreshing = false;
 const waitingQueue: Array<(token: string) => void> = [];
+const enqueue = (fn: (token: string) => void) => waitingQueue.push(fn);
+const flushQueue = (newAccess: string) => { waitingQueue.forEach(fn => fn(newAccess)); waitingQueue.length = 0; };
 
-function enqueue(fn: (token: string) => void) { waitingQueue.push(fn); }
-function flushQueue(newAccess: string) { for (const fn of waitingQueue) fn(newAccess); waitingQueue.length = 0; }
-
-// --- 실제 리프레시 요청(단일 실행) ---
-// 주의: 기본 axios 사용(이 인스턴스 인터셉터 안 탐)
+// --- 실제 리프레시(단일 실행) ---
+// 주의: 인터셉터 안 타게 기본 axios 사용 + withCredentials
 async function refreshAccessTokenOnce(): Promise<void> {
-  const refresh = tokenStore.getRefresh();
-  if (!refresh) throw new Error("no refresh token");
-
+  // Refresh는 HttpOnly 쿠키로만 보냄 — 헤더 금지
   const { data } = await axios.post(
     `${API_BASE}/api/auth/refresh`,
     null,
-    { headers: { Authorization: `Bearer ${refresh}` } }
+    { withCredentials: true } // 쿠키 전송
   );
-  const { accessToken, refreshToken: newRefresh } = data || {};
-  if (!accessToken) throw new Error("invalid refresh response");
-  tokenStore.set(accessToken, newRefresh);
+  // 백엔드가 access 또는 accessToken 중 하나를 내려줄 수 있으니 둘 다 대응
+  const newAccess: string | undefined = data?.access ?? data?.accessToken;
+  if (!newAccess) throw new Error("invalid refresh response");
+  tokenStore.set(newAccess);
 }
 
 // --- 응답 인터셉터: 401 처리 ---
 instance.interceptors.response.use(
   (res) => res,
   async (err: unknown) => {
-    if (!axios.isAxiosError(err) || !err.response) {
-      throw toError(err);
-    }
-    const res = err.response;
+    if (!axios.isAxiosError(err) || !err.response) throw toError(err);
+
+    const { response: res } = err;
     const original = (err.config || {}) as RetriableConfig;
 
-    // 호출 경로 식별(무한 루프 방지용)
     const path = resolvePath(original.url ?? "");
     const isAuthEndpoint =
       path.startsWith("/api/auth/exchange") ||
@@ -104,7 +100,7 @@ instance.interceptors.response.use(
     const isBlacklisted = typeof bodyError === "string" && bodyError.includes("로그아웃된 토큰");
 
     if (res.status === 401) {
-      // ✅ auth 엔드포인트 자체에서의 401은 재시도 금지, 즉시 로그아웃
+      // auth 엔드포인트에서 401 → 즉시 로그인 유도
       if (isAuthEndpoint) {
         tokenStore.clear();
         flushQueue("");
@@ -112,15 +108,15 @@ instance.interceptors.response.use(
         throw new Error("auth endpoint 401");
       }
 
-      // ✅ 이미 한 번 재시도했거나 블랙리스트면 종료
-      if (isBlacklisted || original._retry) {
+      // 이미 재시도 했거나 블랙리스트면 종료
+      if (original._retry || isBlacklisted) {
         tokenStore.clear();
         flushQueue("");
         goLoginOnce();
         throw new Error("unauthorized");
       }
 
-      // ✅ 로그인 화면에서는 리프레시 루틴 자체를 돌지 않음
+      // 로그인 페이지 자체에선 리프레시 시도 안 함
       if (window.location.pathname === "/login") {
         throw new Error("unauthorized on login");
       }
@@ -132,15 +128,15 @@ instance.interceptors.response.use(
         isRefreshing = true;
         try {
           await refreshAccessTokenOnce();
-          isRefreshing = false;
-          flushQueue(tokenStore.getAccess() || "");
         } catch (e) {
-          isRefreshing = false;
           tokenStore.clear();
           flushQueue("");
           goLoginOnce();
+          isRefreshing = false;
           throw toError(e);
         }
+        isRefreshing = false;
+        flushQueue(tokenStore.getAccess() || "");
       }
 
       // 리프레시 완료 후 원 요청 재시도

@@ -17,7 +17,7 @@ app.include_router(query_router.router)
 app.include_router(search_router.router)
 app.include_router(debug_router.router)
 app.include_router(admin_ingest_router.router)
-app.include_router(rag_router)
+app.include_router(rag_router.router)
 
 @app.get("/health")
 def health():

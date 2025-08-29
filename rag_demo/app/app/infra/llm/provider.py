@@ -40,7 +40,7 @@ class _OpenAIHTTPClient(LLMClient):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        r = await self._http.post(f"{self._base_url}/v1/chat/completions", json=payload, headers=headers, timeout=self._timeout)
+        r = await self._http.post(f"{self._base_url}/chat/completions", json=payload, headers=headers, timeout=self._timeout)
         r.raise_for_status()
         j = r.json()
         return j["choices"][0]["message"]["content"]

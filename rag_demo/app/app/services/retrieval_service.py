@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Callable, List
 from functools import lru_cache
 from ..infra.vector.chroma_store import search as chroma_search
 from ..services.adapters import flatten_chroma_result
-from ..vector_store.metrics import to_similarity  # <- distance -> score 정규화
+from ..infra.vector.metrics import to_similarity  # <- distance -> score 정규화
 
 SearchFn = Callable[..., Dict[str, Any]]
 

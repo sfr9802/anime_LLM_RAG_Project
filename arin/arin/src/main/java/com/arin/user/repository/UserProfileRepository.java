@@ -16,4 +16,5 @@ public interface UserProfileRepository extends JpaRepository<UserProfile, Long> 
     Optional<UserProfile> findByAppUserId(@Param("appUserId") Long appUserId);
 
     boolean existsByAppUser(AppUser appUser);
+
 }
