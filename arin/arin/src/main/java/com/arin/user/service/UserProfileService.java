@@ -3,45 +3,37 @@ package com.arin.user.service;
 import com.arin.user.dto.UserProfileResDto;
 import com.arin.user.entity.UserProfile;
 import com.arin.user.repository.UserProfileRepository;
-import org.springframework.data.jpa.repository.JpaRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import java.util.Optional;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class UserProfileService {
 
     private final UserProfileRepository userProfileRepository;
 
-
-    public UserProfileService(UserProfileRepository userProfileRepository
-
-    ) {
-        this.userProfileRepository = userProfileRepository;
+    /** /api/users/me 용 단일 진입점 */
+    public UserProfileResDto getMe(Long appUserId) {
+        UserProfile p = userProfileRepository.findWithUserByAppUserId(appUserId)
+                .orElseThrow(() -> new ProfileNotFoundException(appUserId));
+        return toDto(p);
     }
 
-    public UserProfileResDto getProfile(Long userId) {
-        UserProfile profile = userProfileRepository.findByAppUserId(userId)
-                .orElseThrow(() -> new RuntimeException("프로필 없음"));
-
-        return new UserProfileResDto(profile);  // ✅
+    /** 필요 시 다른 사용자 조회 */
+    public UserProfileResDto getByUserId(Long userId) {
+        UserProfile p = userProfileRepository.findWithUserByAppUserId(userId)
+                .orElseThrow(() -> new ProfileNotFoundException(userId));
+        return toDto(p);
     }
-    public UserProfileResDto getMyProfile(Long appUserId) {
-        UserProfile profile = userProfileRepository.findByAppUserId(appUserId)
-                .orElseThrow(() -> new IllegalArgumentException("프로필 없음"));
 
+    private static UserProfileResDto toDto(UserProfile profile) {
         return UserProfileResDto.builder()
                 .id(profile.getId())
                 .nickname(profile.getNickname())
-                .email(profile.getAppUser().getEmail())  // 여기는 세션 열려있으므로 괜찮음
+                .email(profile.getAppUser().getEmail())
                 .role(profile.getAppUser().getRole().name())
                 .build();
     }
-    public UserProfile findByAppUserId(Long appUserId) {
-        return userProfileRepository.findByAppUserId(appUserId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 AppUser의 프로필이 존재하지 않음"));
-    }
-
 }
-
-

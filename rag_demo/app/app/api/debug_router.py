@@ -1,12 +1,12 @@
 # app/app/api/debug.py
 from __future__ import annotations
-from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi import APIRouter, Body, Header
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional, Literal
+import os
 
 from ..services.retrieval_service import retrieve as svc_retrieve
 from ..services.eval_service import evaluate_hit as svc_evaluate_hit
-from ..services.search_service import SearchService
 from ..services.rag_service import RagService
 from ..infra.llm.provider import get_chat
 from ..configure import config
@@ -58,17 +58,21 @@ def debug_eval_hit(req: EvalReq = Body(...)):
 # ---------- LLM Ping ----------
 @router.get("/ping-llm")
 async def ping_llm():
-    provider = get_chat()
-    out = await provider([{"role":"user","content":"한 줄로만 대답해."}], max_tokens=32, temperature=0.2)
-    used_model = {
-        "local-http": getattr(config, "LLM_BASE_URL", "local-http"),
-        "local-inproc": "llama-cpp-local",
-        "openai": getattr(config, "OPENAI_MODEL", "openai-default"),
-    }.get(getattr(config, "LLM_PROVIDER", "local-http"), "unknown")
-    return {"ok": True, "provider": config.LLM_PROVIDER, "model": used_model, "answer": out}
+    chat = get_chat()
+    out = await chat([{"role":"user","content":"한 줄로만 대답해."}], max_tokens=32, temperature=0.2)
+
+    provider = getattr(config, "LLM_PROVIDER", "local-http")
+    if provider == "openai":
+        used_model = getattr(config, "OPENAI_MODEL", os.getenv("OPENAI_MODEL", "openai-default"))
+    elif provider == "local-inproc":
+        used_model = "llama-cpp-inproc"
+    else:  # local-http
+        used_model = getattr(config, "LLM_MODEL", os.getenv("LLM_MODEL", "local-model"))
+
+    return {"ok": True, "provider": provider, "model": used_model, "answer": out}
 
 # ---------- RAG 즉석 호출 ----------
-_rag = RagService(search=SearchService())  # 간단히 전역 싱글톤
+_rag = RagService()  # ✅ 인자 없이
 
 class RagAskIn(BaseModel):
     q: str
@@ -80,45 +84,19 @@ class RagAskIn(BaseModel):
 
 @router.post("/rag-ask")
 async def debug_rag_ask(req: RagAskIn):
-    docs = _rag.retrieve_docs(req.q, section=req.section, top_k=req.k)
-    context = _rag.build_context(docs)
-    if not context:
-        return {"answer": "컨텍스트가 없어 답변 생성을 생략한다.", "sources": [], "model": getattr(config, "LLM_BASE_URL", "")}
+    # ✅ RagService의 시그니처에 맞춰 호출 (section → where)
+    where = {"section": req.section} if req.section else None
+    return await _rag.ask(
+        q=req.q,
+        k=req.k,
+        where=where,
+        use_mmr=True,
+        lam=0.5,
+        max_tokens=req.max_tokens,
+        temperature=req.temperature,
+        preview_chars=req.preview_chars,
+    )
 
-    prompt = _rag._render_prompt(req.q, context)
-    messages = [
-        {"role": "system", "content": "답변은 한국어. 제공된 컨텍스트만 사용. 모르면 모른다고 답하라."},
-        {"role": "user", "content": prompt},
-    ]
-    provider = get_chat()
-    out = await provider(messages, max_tokens=req.max_tokens, temperature=req.temperature)
-
-    used_model = {
-        "local-http": getattr(config, "LLM_BASE_URL", "local-http"),
-        "local-inproc": "llama-cpp-local",
-        "openai": getattr(config, "OPENAI_MODEL", "openai-default"),
-    }.get(getattr(config, "LLM_PROVIDER", "local-http"), "unknown")
-
-    sources: List[Dict[str, Any]] = []
-    for d in docs:
-        meta: Dict[str, Any] = {}
-        for k in ("id", "doc_id", "title", "score", "seg_index", "url", "section"):
-            v = getattr(d, k, None) if not isinstance(d, dict) else d.get(k)
-            if v is not None:
-                meta[k] = v
-        if meta:
-            sources.append(meta)
-
-    return {
-        "answer": out,
-        "provider": config.LLM_PROVIDER,
-        "model": used_model,
-        "sources": sources,
-        "preview": {
-            "context": context[:req.preview_chars],
-            "prompt": prompt[:req.preview_chars],
-        }
-    }
 @router.get("/count")
 def debug_count():
     from ..infra.vector.chroma_store import get_collection
