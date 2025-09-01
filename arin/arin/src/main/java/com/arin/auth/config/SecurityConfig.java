@@ -12,7 +12,6 @@ import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-// 필요시 메서드 시큐리티 쓰면 열어라
 // import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.web.configurers.RequestCacheConfigurer;
@@ -24,11 +23,10 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import java.time.Duration;
 import java.util.List;
 
 @EnableWebSecurity
-// @EnableMethodSecurity // @PreAuthorize 쓸 거면 주석 해제
+// @EnableMethodSecurity
 @Configuration
 @RequiredArgsConstructor
 public class SecurityConfig {
@@ -47,17 +45,27 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
+                        // ✅ 인증 플로우에 필요한 공개 엔드포인트만 열기
                         .requestMatchers(
-                                "/", "/login**",
                                 "/oauth2/**", "/login/oauth2/code/**",
-                                "/api/auth/**", "/api/users/public/**",
-                                "/swagger-ui/**", "/v3/api-docs/**",
-                                "/actuator/health", "/error"
+                                "/api/auth/exchange", "/api/auth/refresh", "/api/auth/logout"
                         ).permitAll()
-                        .requestMatchers(HttpMethod.TRACE, "/**").denyAll()
+
+                        // 공개 유저 리소스가 따로 있으면 유지
+                        .requestMatchers("/api/users/public/**").permitAll()
+
+                        // 문서/헬스 (dev/prod 프로필에 맞게 유지)
+                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        .requestMatchers("/actuator/health", "/error").permitAll()
+
+                        // 관리자/매니저 보호
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/manager/**").hasRole("MANAGER")
+
+                        // 프록시는 인증 필요
                         .requestMatchers("/api/proxy/**").authenticated()
+
                         .anyRequest().authenticated()
                 )
 
@@ -85,15 +93,42 @@ public class SecurityConfig {
                         })
                 )
 
-                .addFilterBefore(jwtBlacklistFilter, BearerTokenAuthenticationFilter.class);
+                // ✅ Bearer 토큰이 파싱된 뒤 블랙리스트 여부를 확인
+                .addFilterAfter(jwtBlacklistFilter, BearerTokenAuthenticationFilter.class);
 
         return http.build();
     }
 
-    // ==== JWT 권한 매핑 컨버터 (옵션 B: 커스텀) ====
     @Bean
     public Converter<Jwt, ? extends AbstractAuthenticationToken> compositeJwtAuthConverter() {
         // 네가 만든 컨버터: roles/authorities/scope 병합 + 롤 계층 전개
         return new CompositeJwtAuthConverter();
     }
+
+    /**
+     * CORS 설정 (이미 WebCorsConfig가 있으면 이 Bean은 생략해도 됨)
+     * - 프론트에서 credentials: 'include' 로 쿠키 전송하기 위해 allowCredentials=true 필요
+     * - allowedOrigins는 정확히 한정 (와일드카드 금지)
+     */
+    // SecurityConfig.java
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration cfg = new CorsConfiguration();
+        cfg.setAllowCredentials(true);
+        // 개발은 정확히 프론트 오리진만 허용 (와일드카드 금지)
+        cfg.addAllowedOrigin("http://localhost:5173");
+
+        // 메서드/헤더는 넉넉히
+        cfg.addAllowedMethod(CorsConfiguration.ALL);
+        cfg.addAllowedHeader(CorsConfiguration.ALL);
+
+        // 디버깅 편하게
+        cfg.addExposedHeader("Set-Cookie");
+        cfg.addExposedHeader("X-Trace-Id");
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", cfg);
+        return source;
+    }
+
 }
