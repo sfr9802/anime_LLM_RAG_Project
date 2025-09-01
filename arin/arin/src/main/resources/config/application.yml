@@ -1,3 +1,4 @@
+# 공통
 spring:
   profiles:
     active: dev
@@ -10,6 +11,7 @@ spring:
       ddl-auto: update
     show-sql: true
     database-platform: org.hibernate.dialect.MySQL8Dialect
+    open-in-view: false
   security:
     oauth2:
       client:
@@ -26,30 +28,67 @@ spring:
             user-info-uri: https://www.googleapis.com/oauth2/v3/userinfo
             user-name-attribute: sub
   redis:
-    host: localhost
+    host: localhost   # ← 스프링이 호스트에서 돌 때
     port: 6379
     timeout: 2000
+
 jwt:
-  secret: 6666666666666666666666666666666666666666666666666666666666666666666666666666666666
-  expiration: 3600000  # 1시간 (ms 기준)
-  refresh-expiration: 604800000  # 7일 (Refresh Token)
+  secret: "9Em2u5g21z17kI8gcJr7pahzcg5GTrn6IJXv4TnJJPM="
+  is-base64: true
+  issuer: arin
+  audience: frontend
+  expiration: 3600000          # 1h
+  refresh-expiration: 604800000 # 7d
+
 app:
   oauth2:
     redirect-uri: http://localhost:5173/oauth/success-popup
     allowed-origins:
       - http://localhost:5173
+  security:
+    refresh-cookie:
+      name: refresh_token
+      path: /api/auth/
+      same-site: Lax
+      secure: false
 logging:
   level:
     org.springframework.security: DEBUG
     org.springframework.web: INFO
+    org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping: TRACE
+proxy:
+  prefix: /api/proxy
+  upstream: http://localhost:9000
+  allowed-path-prefixes: /rag/
+  connect-timeout-ms: 3000
+  read-timeout-ms: 1200000
+  forward-authorization: true
+#  hmac:
+#    secret: ""  # 필요 시 채워서 사용
+
+--- # dev
+spring:
+  config:
+    activate:
+      on-profile: dev
+springdoc:
+  swagger-ui:
+    enabled: true
+  api-docs:
+    enabled: true
+
+--- # prod
+spring:
+  config:
+    activate:
+      on-profile: prod
 springdoc:
   swagger-ui:
     enabled: false
   api-docs:
     enabled: false
-proxy:
-  prefix: /api/proxy
-  upstream: http://fastapi:8000
-  connect-timeout-ms: 3000
-  read-timeout-ms: 5000
-
+app:
+  security:
+    refresh-cookie:
+      secure: true
+      same-site: None   # 크로스도메인이면 None + HTTPS 필수

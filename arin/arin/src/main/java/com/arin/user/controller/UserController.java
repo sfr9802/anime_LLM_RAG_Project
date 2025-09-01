@@ -1,69 +1,86 @@
+// com.arin.user.controller.UserController
 package com.arin.user.controller;
 
-import com.arin.auth.entity.AppUserDetails;
-import com.arin.auth.oauth.CustomOAuth2User;
+import com.arin.auth.entity.AppUser;
+import com.arin.auth.repository.AppUserRepository;
+import com.arin.user.dto.UserProfileReqDto;
 import com.arin.user.dto.UserProfileResDto;
+import com.arin.user.entity.UserProfile;
+import com.arin.user.repository.UserProfileRepository;
 import com.arin.user.service.UserProfileService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/users")
-@SecurityRequirement(name = "bearerAuth")
 @RequiredArgsConstructor
-@Tag(name = "User", description = "유저 관련 API")
 public class UserController {
 
     private final UserProfileService userProfileService;
+    private final AppUserRepository appUserRepository;
+    private final UserProfileRepository userProfileRepository;
 
-    @Operation(
-            summary = "내 프로필 조회",
-            description = "현재 로그인한 사용자의 프로필 정보를 조회합니다. (JWT 우선)"
-    )
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "조회 성공"),
-            @ApiResponse(responseCode = "401", description = "인증되지 않음"),
-            @ApiResponse(responseCode = "500", description = "내부 서버 오류")
-    })
-    @GetMapping("/me")
-    public ResponseEntity<UserProfileResDto> getMyProfile(Authentication authentication) {
-        Long appUserId = resolveUserId(authentication);
-        UserProfileResDto dto = userProfileService.getMyProfile(appUserId);
-        return ResponseEntity.ok(dto);
+    @GetMapping("/me/profile")
+    public ResponseEntity<UserProfileResDto> getMyProfile(Authentication auth) {
+        Long userId = resolveUserId(auth);
+        return ResponseEntity.ok(userProfileService.getMyProfile(userId));
     }
 
-    private Long resolveUserId(Authentication authentication) {
-        // ✅ 리소스서버(JWT) 경로: CompositeJwtAuthConverter에서 principal=sub 로 셋됨
-        if (authentication instanceof JwtAuthenticationToken jwt) {
-            // 기본: principal(name)=sub → 숫자 변환
-            String name = jwt.getName(); // 보통 sub
-            try {
-                return Long.parseLong(name);
-            } catch (NumberFormatException ignore) {
-                // fallback: 클레임에 userId가 있으면 사용
-                Object uid = jwt.getToken().getClaims().get("userId");
-                if (uid != null) return Long.valueOf(uid.toString());
-                throw new IllegalStateException("JWT에 유효한 userId/sub 없음");
-            }
-        }
+    @PatchMapping("/me/profile")
+    public ResponseEntity<UserProfileResDto> updateMyProfile(
+            Authentication auth,
+            @Valid @RequestBody UserProfileReqDto req) {
+        Long userId = resolveUserId(auth);
+        return ResponseEntity.ok(userProfileService.upsertMyProfile(userId, req));
+    }
 
-        // ⬇️ 레거시(세션형) 대비: 남겨두되, 새 구조에선 거의 안 타게 됨
-        Object principal = authentication.getPrincipal();
-        if (principal instanceof CustomOAuth2User customUser) {
-            return customUser.getId();
+    // 필요하면 /api/users/me 요약 엔드포인트도 추가 가능(프로필 합쳐서 반환)
+    @GetMapping("/me")
+    public ResponseEntity<?> me(Authentication auth) {
+        if (!(auth instanceof JwtAuthenticationToken jwt)) {
+            return ResponseEntity.status(401).body(Map.of("error", "unauthorized"));
         }
-        if (principal instanceof AppUserDetails userDetails) {
-            return userDetails.getUser().getId();
-        }
+        Object v = jwt.getToken().getClaims().getOrDefault("userId", jwt.getToken().getSubject());
+        final Long userId;
+        try { userId = Long.valueOf(String.valueOf(v)); }
+        catch (Exception e) { return ResponseEntity.badRequest().body(Map.of("error", "bad_token")); }
 
-        throw new IllegalStateException("지원하지 않는 인증 타입: " + authentication.getClass().getName());
+        var user = appUserRepository.findById(userId).orElse(null);
+        if (user == null) return ResponseEntity.status(404).body(Map.of("error", "not_found"));
+
+        var p = userProfileRepository.findByAppUserId(userId).orElse(null);
+        String username = (p != null && p.getNickname() != null && !p.getNickname().isBlank())
+                ? p.getNickname()
+                : (user.getEmail() != null ? user.getEmail().split("@")[0] : "user-" + user.getId());
+
+        // 프론트 User 타입에 딱 맞춰 리턴
+        return ResponseEntity.ok(Map.of(
+                "id", user.getId(),
+                "email", Objects.requireNonNull(user.getEmail()),
+                "role", user.getRole().name(),
+                "username", username
+        ));
+    }
+
+
+    private Long resolveUserId(Authentication auth) {
+        if (!(auth instanceof JwtAuthenticationToken jwt)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "no jwt");
+        }
+        Object v = jwt.getToken().getClaims()
+                .getOrDefault("userId", jwt.getToken().getSubject());
+        try {
+            return Long.valueOf(String.valueOf(v));
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid userId in token");
+        }
     }
 }

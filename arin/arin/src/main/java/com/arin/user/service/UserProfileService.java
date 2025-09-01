@@ -1,39 +1,65 @@
+// com.arin.user.service.UserProfileService
 package com.arin.user.service;
 
+import com.arin.auth.entity.AppUser;
+import com.arin.auth.repository.AppUserRepository;
+import com.arin.user.dto.UserProfileReqDto;
 import com.arin.user.dto.UserProfileResDto;
 import com.arin.user.entity.UserProfile;
 import com.arin.user.repository.UserProfileRepository;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class UserProfileService {
 
+    private final AppUserRepository appUserRepository;
     private final UserProfileRepository userProfileRepository;
 
-    /** /api/users/me 용 단일 진입점 */
-    public UserProfileResDto getMe(Long appUserId) {
-        UserProfile p = userProfileRepository.findWithUserByAppUserId(appUserId)
-                .orElseThrow(() -> new ProfileNotFoundException(appUserId));
-        return toDto(p);
+    @Transactional
+    public UserProfileResDto upsertMyProfile(Long userId, UserProfileReqDto req) {
+        AppUser user = appUserRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
+
+        UserProfile profile = userProfileRepository.findByAppUser(user)
+                .orElseGet(() -> UserProfile.builder()
+                        .appUser(user)
+                        .nickname(defaultNick(user.getEmail()))
+                        .build());
+
+        if (req.getNickname() != null && !req.getNickname().isBlank()) {
+            profile.changeNickname(req.getNickname().trim());
+        }
+
+        UserProfile saved = userProfileRepository.save(profile);
+        return toResDto(user, saved);
     }
 
-    /** 필요 시 다른 사용자 조회 */
-    public UserProfileResDto getByUserId(Long userId) {
-        UserProfile p = userProfileRepository.findWithUserByAppUserId(userId)
-                .orElseThrow(() -> new ProfileNotFoundException(userId));
-        return toDto(p);
+    @Transactional
+    public UserProfileResDto getMyProfile(Long userId) {
+        AppUser user = appUserRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
+
+        UserProfile profile = userProfileRepository.findByAppUser(user).orElse(null);
+        return toResDto(user, profile);
     }
 
-    private static UserProfileResDto toDto(UserProfile profile) {
+    private static UserProfileResDto toResDto(AppUser user, UserProfile profile) {
         return UserProfileResDto.builder()
-                .id(profile.getId())
-                .nickname(profile.getNickname())
-                .email(profile.getAppUser().getEmail())
-                .role(profile.getAppUser().getRole().name())
+                .id(profile != null ? profile.getId() : null)
+                .nickname(profile != null ? profile.getNickname() : defaultNick(user.getEmail()))
+                .email(user.getEmail())
+                .role(user.getRole().name())
                 .build();
+    }
+
+    private static String defaultNick(String email) {
+        if (email == null || email.isBlank()) return "User";
+        int at = email.indexOf('@');
+        return "User_" + (at > 0 ? email.substring(0, at) : email);
     }
 }

@@ -10,4 +10,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'), // <-- 이 줄 추가
     },
   },
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
+  },
 });

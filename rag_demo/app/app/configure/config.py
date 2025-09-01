@@ -77,3 +77,5 @@ OPENAI_BASE_URL   = _env("OPENAI_BASE_URL", default="https://api.openai.com/v1")
 OPENAI_API_KEY    = _env("OPENAI_API_KEY",  default="")
 OPENAI_MODEL      = _env("OPENAI_MODEL",    default="gpt-4o-mini")
 OPENAI_TIMEOUT    = float(_env("OPENAI_TIMEOUT", default="60"))
+
+JWT_SECRET = _env("JWT_SECRET", default="9Em2u5g21z17kI8gcJr7pahzcg5GTrn6IJXv4TnJJPM=")

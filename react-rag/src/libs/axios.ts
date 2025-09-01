@@ -1,161 +1,204 @@
-import axios, { type InternalAxiosRequestConfig } from "axios";
+// src/libs/axios.ts
+import axios, { type InternalAxiosRequestConfig, type AxiosError } from "axios";
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "";
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").trim(); // dev에선 보통 ""
+// refresh는 인증 쿠키만 필요하므로, API_BASE가 비어있으면 8080으로 폴백
+const REFRESH_BASE =
+  API_BASE ||
+  (import.meta.env.VITE_REFRESH_BASE?.toString().trim() || "http://localhost:8080");
 
-// 쿠키 기반 리프레시를 위해 전역으로 허용해도 됨(쿠키 Path=/auth/라서 다른 경로엔 안 붙음)
-const instance = axios.create({ baseURL: API_BASE, withCredentials: true });
+const instance = axios.create({
+  baseURL: API_BASE,     // ""면 프런트 오리진 기준 상대경로로 나감 (Vite 프록시 사용 시 OK)
+  withCredentials: true, // refresh 쿠키 전송
+});
 
 type RetriableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-// --- 토큰 스토리지 (Access만) ---
+const AUTH_PATHS = [
+  "/oauth2/authorization",
+  "/login/oauth2/code",
+  "/api/auth/exchange",
+  "/api/auth/refresh",
+  "/api/auth/logout",
+];
+const isAuthPath = (p: string) => AUTH_PATHS.some((e) => p.startsWith(e));
+
 const tokenStore = {
-  getAccess() { return localStorage.getItem("accessToken"); },
-  set(access: string) { localStorage.setItem("accessToken", access); },
-  clear() { localStorage.removeItem("accessToken"); },
+  get() {
+    return localStorage.getItem("accessToken");
+  },
+  set(t: string) {
+    localStorage.setItem("accessToken", t);
+  },
+  clear() {
+    localStorage.removeItem("accessToken");
+  },
 };
 
-// --- Error 래퍼 ---
-function toError(x: unknown): Error {
+const toError = (x: unknown): Error => {
   if (x instanceof Error) return x;
   if (typeof x === "string") return new Error(x);
-  try { return new Error(JSON.stringify(x)); } catch { return new Error("Request failed"); }
-}
+  try {
+    return new Error(JSON.stringify(x));
+  } catch {
+    return new Error("Request failed");
+  }
+};
 
-// pathname만 안전 추출
-function resolvePath(raw: string): string {
-  try { return new URL(raw, API_BASE || window.location.origin).pathname; }
-  catch { return raw; }
-}
+const resolvePath = (raw: string): string => {
+  try {
+    // 절대/상대 URL 모두 안전하게 pathname만 추출
+    return new URL(raw, window.location.origin).pathname;
+  } catch {
+    return raw;
+  }
+};
 
-// 로그인 리다이렉트 중복 방지
 let redirectingToLogin = false;
-function goLoginOnce() {
+const goLoginOnce = () => {
   if (window.location.pathname === "/login") return;
   if (redirectingToLogin) return;
   redirectingToLogin = true;
   window.location.href = "/login";
-}
+};
 
-// --- 요청 인터셉터: Access 자동 주입 ---
+// ===== 요청 인터셉터 =====
 instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const access = tokenStore.getAccess();
-
   const path = resolvePath(config.url ?? "");
-  const isAuthEndpoint =
-    path.startsWith("/api/auth/exchange") ||
-    path.startsWith("/api/auth/refresh") ||
-    path.startsWith("/api/auth/logout");
-
-  if (!isAuthEndpoint && access) {
-    config.headers = config.headers ?? {};
-    (config.headers as Record<string, string>).Authorization = `Bearer ${access}`;
-  } else if (isAuthEndpoint) {
-    // auth 엔드포인트엔 Authorization 헤더를 넣지 않음(특히 /refresh)
+  if (isAuthPath(path)) {
+    // auth 엔드포인트엔 Authorization 헤더 금지(특히 /refresh)
     if (config.headers && "Authorization" in config.headers) {
       delete (config.headers as Record<string, string>).Authorization;
     }
-    // 쿠키 기반 호출을 위해 보장
-    (config as any).withCredentials = true;
+  } else {
+    const access = tokenStore.get();
+    if (access) {
+      config.headers = config.headers ?? {};
+      (config.headers as Record<string, string>).Authorization = `Bearer ${access}`;
+    }
   }
   return config;
 });
 
-// --- 401 동시성 제어 ---
+// ===== 401 동시성 제어 =====
 let isRefreshing = false;
-const waitingQueue: Array<(token: string) => void> = [];
-const enqueue = (fn: (token: string) => void) => waitingQueue.push(fn);
-const flushQueue = (newAccess: string) => { waitingQueue.forEach(fn => fn(newAccess)); waitingQueue.length = 0; };
+const waiters: Array<(token: string) => void> = [];
+const enqueue = (fn: (token: string) => void) => waiters.push(fn);
+const flush = (t: string) => {
+  waiters.forEach((fn) => fn(t));
+  waiters.length = 0;
+};
 
-// --- 실제 리프레시(단일 실행) ---
-// 주의: 인터셉터 안 타게 기본 axios 사용 + withCredentials
-async function refreshAccessTokenOnce(): Promise<void> {
-  // Refresh는 HttpOnly 쿠키로만 보냄 — 헤더 금지
+// ===== 실제 리프레시 (인터셉터 우회 + 절대 URL 폴백) =====
+async function refreshAccessTokenOnce(): Promise<string> {
   const { data } = await axios.post(
-    `${API_BASE}/api/auth/refresh`,
+    `${REFRESH_BASE}/api/auth/refresh`,
     null,
     { withCredentials: true } // 쿠키 전송
   );
-  // 백엔드가 access 또는 accessToken 중 하나를 내려줄 수 있으니 둘 다 대응
-  const newAccess: string | undefined = data?.access ?? data?.accessToken;
+  // 백엔드 응답 키 방어적으로 처리
+  const newAccess: string | undefined = data?.accessToken ?? data?.access;
   if (!newAccess) throw new Error("invalid refresh response");
   tokenStore.set(newAccess);
+  return newAccess;
 }
 
-// --- 응답 인터셉터: 401 처리 ---
+function parseAuthError(err: AxiosError) {
+  const data = (err.response?.data ?? {}) as any;
+  const error = (data?.error ?? "").toString().toUpperCase();
+  const message = (data?.message ?? "").toString().toLowerCase();
+  return {
+    isUnauthorized: err.response?.status === 401,
+    isForbidden: err.response?.status === 403,
+    isAuthEndpoint: isAuthPath(resolvePath(err.config?.url ?? "")),
+    // 재사용/무효/블랙리스트 등은 바로 재로그인
+    hardFail:
+      error === "UNAUTHORIZED" &&
+      (message.includes("reuse") ||
+        message.includes("invalid refresh") ||
+        message.includes("not a refresh") ||
+        message.includes("token blacklisted")),
+  };
+}
+
+// ===== 응답 인터셉터 =====
 instance.interceptors.response.use(
   (res) => res,
   async (err: unknown) => {
     if (!axios.isAxiosError(err) || !err.response) throw toError(err);
 
-    const { response: res } = err;
+    const { isUnauthorized, isForbidden, isAuthEndpoint, hardFail } = parseAuthError(err);
     const original = (err.config || {}) as RetriableConfig;
 
-    const path = resolvePath(original.url ?? "");
-    const isAuthEndpoint =
-      path.startsWith("/api/auth/exchange") ||
-      path.startsWith("/api/auth/refresh") ||
-      path.startsWith("/api/auth/logout");
+    // 인증 엔드포인트에서 401 → 바로 재로그인
+    if (isAuthEndpoint && isUnauthorized) {
+      tokenStore.clear();
+      flush("");
+      goLoginOnce();
+      throw new Error("auth endpoint 401");
+    }
 
-    const bodyError = (res.data as any)?.error ?? "";
-    const isBlacklisted = typeof bodyError === "string" && bodyError.includes("로그아웃된 토큰");
+    if (isForbidden) throw new Error("Forbidden");
+    if (!isUnauthorized) throw toError(err);
 
-    if (res.status === 401) {
-      // auth 엔드포인트에서 401 → 즉시 로그인 유도
-      if (isAuthEndpoint) {
-        tokenStore.clear();
-        flushQueue("");
-        goLoginOnce();
-        throw new Error("auth endpoint 401");
-      }
+    // 이미 재시도했거나 강한 실패면 로그인 유도
+    if (original._retry || hardFail) {
+      tokenStore.clear();
+      flush("");
+      goLoginOnce();
+      throw new Error("unauthorized");
+    }
 
-      // 이미 재시도 했거나 블랙리스트면 종료
-      if (original._retry || isBlacklisted) {
-        tokenStore.clear();
-        flushQueue("");
-        goLoginOnce();
-        throw new Error("unauthorized");
-      }
+    // 로그인 화면에서는 리프레시 시도하지 않음
+    if (window.location.pathname === "/login") {
+      throw new Error("unauthorized on login");
+    }
 
-      // 로그인 페이지 자체에선 리프레시 시도 안 함
-      if (window.location.pathname === "/login") {
-        throw new Error("unauthorized on login");
-      }
+    original._retry = true;
 
-      original._retry = true;
-
-      // 동시 401 → 단일 리프레시
-      if (!isRefreshing) {
-        isRefreshing = true;
-        try {
-          await refreshAccessTokenOnce();
-        } catch (e) {
-          tokenStore.clear();
-          flushQueue("");
-          goLoginOnce();
-          isRefreshing = false;
-          throw toError(e);
-        }
+    // 동시 401 → 단일 리프레시
+    if (!isRefreshing) {
+      isRefreshing = true;
+      try {
+        const t = await refreshAccessTokenOnce();
         isRefreshing = false;
-        flushQueue(tokenStore.getAccess() || "");
+        flush(t);
+      } catch (e) {
+        isRefreshing = false;
+        tokenStore.clear();
+        flush("");
+        goLoginOnce();
+        throw toError(e);
       }
+    }
 
-      // 리프레시 완료 후 원 요청 재시도
-      return new Promise((resolve, reject) => {
-        enqueue((newAccess) => {
-          if (!newAccess) return reject(new Error("relogin"));
-          original.headers = original.headers ?? {};
-          (original.headers as Record<string, string>).Authorization = `Bearer ${newAccess}`;
-          resolve(instance(original));
-        });
+    // 리프레시 완료 후 원 요청 재시도
+    return new Promise((resolve, reject) => {
+      enqueue((newAccess) => {
+        if (!newAccess) return reject(new Error("relogin"));
+        original.headers = original.headers ?? {};
+        (original.headers as Record<string, string>).Authorization = `Bearer ${newAccess}`;
+        resolve(instance(original));
       });
-    }
-
-    if (res.status === 403) {
-      throw new Error("Forbidden");
-    }
-
-    throw toError(err);
+    });
   }
 );
+
+// ===== 유틸 =====
+export function setAccessToken(access: string) {
+  tokenStore.set(access);
+}
+export function clearAccessToken() {
+  tokenStore.clear();
+}
+export async function logout(all = false) {
+  try {
+    await instance.post(`/api/auth/logout${all ? "?all=true" : ""}`, null, {
+      withCredentials: true,
+    });
+  } finally {
+    tokenStore.clear();
+  }
+}
 
 export default instance;

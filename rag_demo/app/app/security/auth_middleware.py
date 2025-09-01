@@ -1,109 +1,85 @@
 # app/app/security/auth_middleware.py
-import os
-import jwt
+import os, base64, binascii, jwt
 from jwt import InvalidTokenError, ExpiredSignatureError
-from typing import Tuple
+from typing import Tuple, Optional
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+import hashlib, logging
 
-def _is_local_host(host: str | None) -> bool:
-    if not host:
-        return False
-    host = host.lower()
-    if host in ("127.0.0.1", "::1", "localhost"):
-        return True
-    # 사내/로컬 대역도 허용하고 싶으면 아래 범위를 쓰면 됨
-    if host.startswith("192.168.") or host.startswith("10.") or host.startswith("172.16.") or host.startswith("172.17.") \
-       or host.startswith("172.18.") or host.startswith("172.19.") or host.startswith("172.20.") or host.startswith("172.21.") \
-       or host.startswith("172.22.") or host.startswith("172.23.") or host.startswith("172.24.") or host.startswith("172.25.") \
-       or host.startswith("172.26.") or host.startswith("172.27.") or host.startswith("172.28.") or host.startswith("172.29.") \
-       or host.startswith("172.30.") or host.startswith("172.31."):
-        return True
-    return False
+log = logging.getLogger("auth")
 
-def _bypass_mode() -> str:
-    # "1/true/on" → 전역 바이패스, "local" → 로컬 접속만 바이패스
-    return (os.getenv("AUTH_BYPASS", "0") or "").strip().lower()
+def _env_true(name: str, default="0") -> bool:
+    val = (os.getenv(name, default) or "").strip().lower()
+    return val in ("1","true","yes","on")
 
 class AuthOnlyMiddleware(BaseHTTPMiddleware):
-    """
-    전역 JWT 재검증(HS256). 유효성만 확인하고 라우터는 건드리지 않음.
-    - protected_prefixes 경로만 보호
-    - public_paths는 화이트리스트
-    - OPTIONS, /docs, /openapi.json 등은 통과
-    - ENV AUTH_BYPASS=1/true/on → 전체 바이패스
-      ENV AUTH_BYPASS=local      → 로컬에서 온 요청만 바이패스
-    """
     def __init__(
-        self,
-        app,
-        *,
-        secret: str | None = None,
+        self, app, *,
+        secret: Optional[str] = None,
         protected_prefixes: Tuple[str, ...] = ("/rag", "/search", "/admin", "/api"),
         public_paths: Tuple[str, ...] = ("/health", "/docs", "/redoc", "/openapi.json", "/debug", "/rag/healthz"),
-        leeway: int = 5,
+        leeway: int = 30,
     ):
         super().__init__(app)
-        self.secret = (secret or os.getenv("JWT_SECRET") or "").strip() or "dev-secret-change-me"
+
+        raw = secret if secret is not None else os.getenv("JWT_SECRET")
+        if raw is None:
+            raise RuntimeError("JWT_SECRET is not set")
+
+        s = str(raw).strip()
+        if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+            s = s[1:-1]  # .env에 따옴표가 있었다면 제거
+
+        if _env_true("JWT_SECRET_B64", "0"):
+            try:
+                secret_bytes = base64.b64decode(s, validate=True)
+            except binascii.Error:
+                raise RuntimeError("JWT_SECRET_B64=true인데 Base64 디코드 실패")
+        else:
+            secret_bytes = s.encode("utf-8")
+
+        if len(secret_bytes) < 32:
+            raise RuntimeError("JWT_SECRET 길이 너무 짧음(>=32 bytes)")
+
+        # 🔎 디버깅용 키 지문(노출 안전한 해시)
+        log.info("[AUTH] key.len=%d, key.fp=%s",
+                 len(secret_bytes),
+                 hashlib.sha256(secret_bytes).hexdigest()[:16])
+
+        self.secret_bytes = secret_bytes
+        self.aud = (os.getenv("JWT_AUD") or "frontend").strip() or None
+        self.iss = (os.getenv("JWT_ISS") or "arin").strip() or None
         self.protected_prefixes = protected_prefixes
         self.public_paths = public_paths
         self.leeway = leeway
 
     async def dispatch(self, request, call_next):
         path = request.url.path
-        method = request.method.upper()
-
-        # ===== BYPASS =====
-        mode = _bypass_mode()
-        if mode in ("1", "true", "yes", "on"):
+        if request.method == "OPTIONS" or any(path.startswith(p) for p in self.public_paths):
             return await call_next(request)
-        if mode == "local" and _is_local_host(getattr(request.client, "host", None)):
-            return await call_next(request)
-
-        # 공개 경로/프리플라이트 통과
-        if method == "OPTIONS" or any(path.startswith(p) for p in self.public_paths):
-            return await call_next(request)
-
-        # 보호 대상만 검증
         if not any(path.startswith(p) for p in self.protected_prefixes):
             return await call_next(request)
 
-        # Authorization: Bearer <token>
         auth = (request.headers.get("authorization") or "").strip()
         if not auth.lower().startswith("bearer "):
             return JSONResponse({"error": "missing token"}, status_code=401)
         token = auth[7:].strip()
-        if not token:
-            return JSONResponse({"error": "missing token"}, status_code=401)
 
         try:
+            options = {"require": ["exp"], "verify_exp": True, "verify_aud": bool(self.aud)}
             claims = jwt.decode(
                 token,
-                self.secret,
+                self.secret_bytes,
                 algorithms=["HS256"],
-                options={"require": ["exp"], "verify_exp": True},
+                audience=self.aud if self.aud else None,
+                issuer=self.iss if self.iss else None,
                 leeway=self.leeway,
+                options=options,
             )
             request.state.claims = claims
-            request.state.roles = _extract_roles(claims)
         except ExpiredSignatureError:
             return JSONResponse({"error": "token expired"}, status_code=401)
         except InvalidTokenError as e:
             return JSONResponse({"error": f"invalid token: {e}"}, status_code=401)
 
         return await call_next(request)
-
-def _extract_roles(payload: dict) -> list[str]:
-    roles = set()
-    r = payload.get("roles")
-    if isinstance(r, list):
-        roles.update(str(x).upper() for x in r)
-    elif isinstance(r, str):
-        roles.update(s.upper() for s in r.replace(",", " ").split() if s)
-    a = payload.get("authorities")
-    if isinstance(a, list):
-        for v in a:
-            s = str(v).upper()
-            if s.startswith("ROLE_"):
-                roles.add(s[5:])
-    return sorted(roles)

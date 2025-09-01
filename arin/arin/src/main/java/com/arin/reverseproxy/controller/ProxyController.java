@@ -13,7 +13,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/proxy")
+@RequestMapping("${proxy.prefix:/api/proxy}") // ← 설정값 사용
 @RequiredArgsConstructor
 public class ProxyController {
 

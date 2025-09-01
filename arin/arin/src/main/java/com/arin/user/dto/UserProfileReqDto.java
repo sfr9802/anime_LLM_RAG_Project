@@ -1,6 +1,7 @@
 package com.arin.user.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.*;
 
 @Getter
@@ -10,9 +11,7 @@ import lombok.*;
 @Builder
 public class UserProfileReqDto {
 
-    @NotBlank(message = "username is required")
-    private String username;
-
-    @NotBlank(message = "password is required")
-    private String password;
+    @NotBlank(message = "nickname is required")
+    @Size(max = 30, message = "nickname must be <= 30 chars")
+    private String nickname;
 }
