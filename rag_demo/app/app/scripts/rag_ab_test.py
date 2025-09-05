@@ -1,7 +1,7 @@
 # app/app/scripts/rag_ab_test.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import argparse, time, json, math, random
+import argparse, time, json, math, random, os
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -9,6 +9,9 @@ from app.app.services.rag_service import RagService
 from app.app.metrics.quality import (
     keys_from_docs, hit_at_k, recall_at_k, dup_rate, p_percentile
 )
+# 추가: raw Chroma top-50 리콜 측정을 위해 직접 조회
+from app.app.services.adapters import flatten_chroma_result
+from app.app.infra.vector.chroma_store import search as chroma_search
 
 # ----- utils -----
 def _norm(s: str) -> str:
@@ -122,25 +125,61 @@ def _sample_from_chroma(max_docs: int, section_hint: str = "요약") -> List[Dic
     random.shuffle(uniq)
     return uniq
 
+# ----- raw chroma recall@50 (pre-rerank, pre-MMR) -----
+def _recall50_raw(q: str, gold: List[str], match_by: str) -> float:
+    res = chroma_search(
+        query=q, n=50, where=None,
+        include_docs=True, include_metas=True, include_ids=True, include_distances=True
+    )
+    items = flatten_chroma_result(res)
+    keys = keys_from_docs(items, by=("title" if match_by == "title" else "doc"))
+    return recall_at_k(keys, gold, 50)
+
+# ----- pre-rerank recall@50 for a strategy (MMR/캡까지 반영, CE만 비활성) -----
+def _recall50_prerank_for_strategy(q: str, gold: List[str], strategy: str, match_by: str, svc_nr: RagService) -> float:
+    try:
+        docs50 = svc_nr.retrieve_docs(q, k=50, strategy=strategy, use_mmr=True)
+        keys = keys_from_docs(docs50, by=("title" if match_by == "title" else "doc"))
+        return recall_at_k(keys, gold, 50)
+    except Exception:
+        return 0.0
+
 # ----- main A/B -----
 def run(max_docs: int, k: int, stratA: str, stratB: str, seed: int = 42,
         section_hint: str = "요약", match_by: str = "title", report: str = "B"):
     random.seed(seed)
-    svc = RagService()
+    svc = RagService()  # 기본(환경설정대로, 보통 리랭커 활성)
+
+    # 리랭커 비활성 인스턴스(프리랭크 측정용)
+    _orig = os.environ.get("RAG_USE_RERANK")
+    os.environ["RAG_USE_RERANK"] = "0"
+    svc_nr = RagService()
+    if _orig is None:
+        del os.environ["RAG_USE_RERANK"]
+    else:
+        os.environ["RAG_USE_RERANK"] = _orig
+
     metas = _sample_from_chroma(max_docs=max_docs, section_hint=section_hint)
 
     rows = []
     for m in metas:
         gold = [ (m.get("seed_title") or m.get("title") or "") ] if match_by == "title" else [ (m.get("doc_id") or "") ]
         queries = _make_queries_from_meta(m)
-        if not queries or not gold or not gold[0]: continue
+        if not queries or not gold or not gold[0]:
+            continue
         q = random.choice(queries)
 
+        # A/B 최종(현재 설정, 보통 리랭커 on)
         t0 = time.perf_counter(); A = svc.retrieve_docs(q, k=k, strategy=stratA); tA = time.perf_counter()-t0
         t0 = time.perf_counter(); B = svc.retrieve_docs(q, k=k, strategy=stratB); tB = time.perf_counter()-t0
 
         keysA = keys_from_docs(A, by=("title" if match_by=="title" else "doc"))
         keysB = keys_from_docs(B, by=("title" if match_by=="title" else "doc"))
+
+        # 추가 지표: raw chroma와 pre-rerank(CE off, k=50)
+        rec50_raw = _recall50_raw(q, gold, match_by)
+        rec50_preA = _recall50_prerank_for_strategy(q, gold, stratA, match_by, svc_nr)
+        rec50_preB = _recall50_prerank_for_strategy(q, gold, stratB, match_by, svc_nr)
 
         rows.append({
             "q": q, "gold": gold, "k": k,
@@ -150,6 +189,10 @@ def run(max_docs: int, k: int, stratA: str, stratB: str, seed: int = 42,
             "latA_ms": tA*1000.0,                 "latB_ms": tB*1000.0,
             "dupA": dup_rate(keysA),              "dupB": dup_rate(keysB),
             "keysA": keysA, "keysB": keysB,
+            # 추가
+            "rec50_raw": rec50_raw,
+            "rec50_preA": rec50_preA,
+            "rec50_preB": rec50_preB,
         })
 
     # aggregate
@@ -178,10 +221,18 @@ def run(max_docs: int, k: int, stratA: str, stratB: str, seed: int = 42,
     dup  = sum(dup_rate(r[keys_key]) for r in rows) / (len(rows) or 1)
     p95  = p_percentile([r[lat_key] for r in rows if isinstance(r.get(lat_key), (int,float))], 95.0)
 
+    # 추가 집계: recall@50 (raw / pre-A / pre-B)
+    rec50_raw_mean = sum(r.get("rec50_raw", 0.0) for r in rows) / (len(rows) or 1)
+    rec50_preA_mean = sum(r.get("rec50_preA", 0.0) for r in rows) / (len(rows) or 1)
+    rec50_preB_mean = sum(r.get("rec50_preB", 0.0) for r in rows) / (len(rows) or 1)
+
     print(f"\n--- Report ({report}) ---")
-    print(f"recall@5  {rec5:.3f}")
-    print(f"p95       {p95:.0f} ms")
-    print(f"dup_rate  {dup:.3f}")
+    print(f"recall@5          {rec5:.3f}")
+    print(f"recall@50(raw)    {rec50_raw_mean:.3f}")
+    print(f"recall@50(pre-A)  {rec50_preA_mean:.3f}")
+    print(f"recall@50(pre-B)  {rec50_preB_mean:.3f}")
+    print(f"p95               {p95:.0f} ms")
+    print(f"dup_rate          {dup:.3f}")
 
     print(f"\n=== Self A/B on Chroma (N={len(rows)}, k={k}, section='{section_hint}', by={match_by}) ===")
     def pr(tag, R):
@@ -194,7 +245,14 @@ def run(max_docs: int, k: int, stratA: str, stratB: str, seed: int = 42,
         "rows": rows,
         "summary": {
             "hit": R_hit, "mrr": R_mrr, "ndcg": R_ndcg, "lat_ms": R_lat,
-            "quality": {"report": report, "by": match_by, "recall@5": round(rec5, 4), "p95_ms": round(p95, 1), "dup_rate": round(dup, 4)}
+            "quality": {
+                "report": report, "by": match_by,
+                "recall@5": round(rec5, 4),
+                "recall@50_raw": round(rec50_raw_mean, 4),
+                "recall@50_preA": round(rec50_preA_mean, 4),
+                "recall@50_preB": round(rec50_preB_mean, 4),
+                "p95_ms": round(p95, 1), "dup_rate": round(dup, 4)
+            }
         }
     }, ensure_ascii=False, indent=2), encoding="utf8")
     print(f"\nSaved: {out.resolve()}")

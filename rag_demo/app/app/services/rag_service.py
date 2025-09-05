@@ -100,6 +100,32 @@ def _title_boost(item: Dict[str, Any], qvars: List[str]) -> float:
         best = max(best, _fuzzy(tn, sn))
     return float(best)
 
+# --- 유틸: 타이틀 캡/환경변수/섹션 쿼터 -------------------------------------------
+def _cap_by_title(items: List[Dict[str, Any]], cap: int = 2) -> List[Dict[str, Any]]:
+    if cap <= 0 or not items:
+        return items
+    cnt: Dict[str, int] = {}
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        meta = it.get("metadata") or {}
+        title = meta.get("seed_title") or meta.get("parent") or meta.get("title") or ""
+        c = cnt.get(title, 0)
+        if c < cap:
+            out.append(it)
+            cnt[title] = c + 1
+    return out
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
 
 class RagService:
     def __init__(self):
@@ -218,10 +244,16 @@ class RagService:
         return items + extras
 
     def _conf(self, items: List[Dict[str, Any]]) -> float:
-        """상위 몇 개의 CE/유사도 평균으로 간단 컨피던스(0..1)."""
+        """상위 몇 개의 CE/유사도로 컨피던스(0..1). 리랭커가 있으면 softmax 기반."""
         if not items:
             return 0.0
-        arr = [it.get("_ce", it.get("score", 0.0)) for it in items[:3]]
+        ce = [it.get("_ce") for it in items[:5] if it.get("_ce") is not None]
+        if ce:
+            x = np.array(ce, dtype=np.float32)
+            x = x - x.max()
+            p = np.exp(x); p = p / (p.sum() + 1e-8)
+            return float(p[0])  # top1 확률
+        arr = [it.get("score", 0.0) for it in items[:3]]
         if not arr:
             return 0.0
         lo, hi = min(arr), max(arr)
@@ -235,21 +267,36 @@ class RagService:
         candidate_k: Optional[int], use_mmr: bool, lam: float
     ) -> List[Dict[str, Any]]:
         """단일 쿼리 경로. 후보 폭을 넓혀 MMR→(CE) 적용."""
-        cand = max(k * 10, 120) if use_mmr or self._reranker else (candidate_k or max(k * 5, 40))
+        # 파라미터화
+        fetch_k = candidate_k or _env_int("RAG_FETCH_K", 160)            # 1차 후보(깊게)
+        mmr_pre_k = _env_int("RAG_MMR_PRE_K", 120)                       # MMR 입력 상한
+        mmr_k = _env_int("RAG_MMR_K", max(k * 4, 40))                    # MMR로 뽑을 수
+        title_cap = _env_int("RAG_TITLE_CAP", 2)                          # 타이틀당 상한
+        rerank_in = _env_int("RAG_RERANK_IN", 24)                         # 리랭커 입력 수
+
+        # 1) 깊게 긁기
         res = chroma_search(
-            query=q, n=cand, where=where,
+            query=q, n=fetch_k, where=where,
             include_docs=True, include_metas=True, include_ids=True, include_distances=True
         )
         self._last_space = (res.get("space") or "cosine").lower()
         items = flatten_chroma_result(res)
         dedup = self._dedup_and_score(items)
 
+        # 2) 타이틀 캡 → 다양화(MMR)
+        dedup = _cap_by_title(dedup, cap=title_cap)
         if use_mmr:
-            pool = self._mmr(q, dedup[:max(k * 6, 60)], k=max(k * 4, 40), lam=lam)
+            pre = dedup[:min(len(dedup), mmr_pre_k)]
+            pool = self._mmr(q, pre, k=mmr_k, lam=lam)
         else:
-            pool = dedup[:max(k * 10, 80)]
+            pool = dedup[:max(k * 12, 120)]
 
-        return self._rerank(q, pool, k) if self._reranker else pool[:k]
+        # 3) 리랭커 입력 제한 후 최종 k
+        if self._reranker:
+            pool = pool[:min(len(pool), rerank_in)]
+            return self._rerank(q, pool, k)
+        else:
+            return pool[:k]
 
     def _retrieve_chroma_only(
         self, q: str, *, k: int, where: Optional[Dict[str, Any]],
@@ -262,7 +309,10 @@ class RagService:
         """
         qvars = _expand_queries(q)
 
-        base_n = max(k * 6, 60)
+        # fetch 파라미터화
+        base_n = _env_int("RAG_FETCH_K", max(k * 8, 80))
+        aux_n = _env_int("RAG_FETCH_K_AUX", max(k * 4, 40))
+
         resA = chroma_search(
             query=q, n=base_n, where=where,
             include_docs=True, include_metas=True, include_ids=True, include_distances=True
@@ -270,12 +320,11 @@ class RagService:
         self._last_space = (resA.get("space") or "cosine").lower()
         items = flatten_chroma_result(resA)
 
-        add_n = max(k * 3, 30)
         for qq in qvars:
             if qq == q:
                 continue
             res = chroma_search(
-                query=qq, n=add_n, where=where,
+                query=qq, n=aux_n, where=where,
                 include_docs=True, include_metas=True, include_ids=True, include_distances=True
             )
             items += flatten_chroma_result(res)
@@ -289,12 +338,24 @@ class RagService:
             it["_combo"] = W_SIM * float(it.get("score") or 0.0) + W_TITLE * boost
         dedup.sort(key=lambda x: x.get("_combo", 0.0), reverse=True)
 
+        # 타이틀 캡 + MMR 파라미터화
+        title_cap = _env_int("RAG_TITLE_CAP", 2)
+        mmr_pre_k = _env_int("RAG_MMR_PRE_K", 160)
+        mmr_k = _env_int("RAG_MMR_K", max(k * 4, 40))
+        rerank_in = _env_int("RAG_RERANK_IN", 24)
+
+        dedup = _cap_by_title(dedup, cap=title_cap)
         if use_mmr:
-            pool = self._mmr(q, dedup[:max(k * 8, 80)], k=max(k * 4, 40), lam=lam)
+            pre = dedup[:min(len(dedup), mmr_pre_k)]
+            pool = self._mmr(q, pre, k=mmr_k, lam=lam)
         else:
             pool = dedup[:max(k * 12, 120)]
 
-        return self._rerank(q, pool, k) if self._reranker else pool[:k]
+        if self._reranker:
+            pool = pool[:min(len(pool), rerank_in)]
+            return self._rerank(q, pool, k)
+        else:
+            return pool[:k]
 
     # ------------------- 공개 API -------------------
     def retrieve_docs(
@@ -314,6 +375,19 @@ class RagService:
             return self._retrieve_chroma_only(q, k=k, where=where, use_mmr=use_mmr, lam=lam)
         else:
             raise ValueError(f"unknown strategy: {strategy}")
+
+    def _quota_by_section(self, items: List[Dict[str, Any]], quota: Dict[str, int], k: int) -> List[Dict[str, Any]]:
+        out, used, rest = [], {s: 0 for s in quota}, []
+        for it in items:
+            sec = (it.get("metadata") or {}).get("section") or ""
+            if sec in quota and used[sec] < quota[sec]:
+                out.append(it); used[sec] += 1
+            else:
+                rest.append(it)
+            if len(out) >= k:
+                return out[:k]
+        out += rest
+        return out[:k]
 
     def build_context(self, docs: List[Dict[str, Any]], *, per_doc_limit: int = 1200, hard_limit: int = 6000) -> str:
         chunks: List[str] = []
@@ -366,27 +440,34 @@ class RagService:
         docs = self.retrieve_docs(q, k=k, where=where, candidate_k=candidate_k, use_mmr=use_mmr, lam=lam, strategy=strategy)
         t_retr_ms = (time.perf_counter() - t0) * 1000.0
 
-        # 1.5) 동일 문서 확장 (+ latency)
-        t1_0 = time.perf_counter()
-        docs = self._expand_same_doc(docs, per_doc=2)
-        t_expand_ms = (time.perf_counter() - t1_0) * 1000.0
-
-        # 컨피던스
+        # 1.1) 리랭크/선정 결과로 컨피던스 먼저 계산
         conf = self._conf(docs)
-        min_conf = float(os.getenv("RAG_MIN_CONF", "0.20"))
+        min_conf = _env_float("RAG_MIN_CONF", float(os.getenv("RAG_MIN_CONF", "0.20")))
         if conf < min_conf:
             resp = RAGQueryResponse(question=q, answer="컨텍스트가 불충분합니다. 더 구체적인 단서가 필요합니다.", documents=[]).model_dump()
             resp["metrics"] = {
                 "k": k, "strategy": strategy, "use_reranker": bool(self._reranker),
                 "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": round(t_expand_ms, 1),
+                "expand_ms": 0.0,
                 "llm_ms": 0.0,
                 "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
                 "conf": round(conf, 4),
                 "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
                 "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
+                "device": "cuda" if torch.cuda.is_available() else "cpu",
+                "retrieved": len(docs),
             }
             return resp
+
+        # 1.5) 동일 문서 확장 (+ latency)  — conf에는 영향 주지 않음
+        t1_0 = time.perf_counter()
+        docs = self._expand_same_doc(docs, per_doc=2)
+        t_expand_ms = (time.perf_counter() - t1_0) * 1000.0
+
+        # (선택) 섹션 쿼터 적용
+        if os.getenv("RAG_USE_SECTION_QUOTA", "0") == "1":
+            quota = {"요약": 2, "본문": 4}
+            docs = self._quota_by_section(docs, quota, k)
 
         context = self.build_context(docs)
         if not context:
@@ -400,6 +481,8 @@ class RagService:
                 "conf": round(conf, 4),
                 "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
                 "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
+                "device": "cuda" if torch.cuda.is_available() else "cpu",
+                "retrieved": len(docs),
             }
             return resp
 
@@ -424,6 +507,8 @@ class RagService:
                 "conf": round(conf, 4),
                 "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
                 "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
+                "device": "cuda" if torch.cuda.is_available() else "cpu",
+                "retrieved": len(docs),
             }
             return resp
 
