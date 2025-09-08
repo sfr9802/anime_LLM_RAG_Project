@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import List, Optional, Literal, Callable, Any, Dict
 import os
 import numpy as np
-
+import sys as _sys
+# 너의 프로젝트에서 쓰일 수 있는 모든 경로 별칭을 통일
+for _alias in (
+    "app.app.domain.embeddings",  # rag_service가 쓰는 경로
+    "app.domain.embeddings",
+):
+    if _alias != __name__:
+        _sys.modules.setdefault(_alias, _sys.modules[__name__])
 # ──────────────────────────────────────────────────────────────────────────────
 # 설정 로딩 (config 모듈 우선, 없으면 환경변수)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -99,7 +106,7 @@ def _load_sbert() -> Any:
     try:
         _DIM = int(m.get_sentence_embedding_dimension())
     except Exception:
-        if _DIM <= 0: _DIM = 768
+        if _DIM <= 0: _DIM = 1024
     return m
 
 def _load_e5() -> Any:

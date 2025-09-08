@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 import argparse, json, hashlib, re, unicodedata
 from typing import Dict, Any, List, Tuple
@@ -24,12 +25,11 @@ def _aliases_from_title(title: str, seed: str | None) -> List[str]:
         t = (t or "").strip()
         if not t: continue
         cands += [
-            t, _strip_paren(t),  # 괄호부제 제거판
-            re.sub(r"\s+", "", t),                       # 공백 제거
-            re.sub(r"[\s\W_]+", "", t),                  # 기호 제거
-            re.sub(r"[^0-9a-zA-Z가-힣]+", "", t),         # 과격 정규화
+            t, _strip_paren(t),                      # 괄호부제 제거
+            re.sub(r"\s+", "", t),                  # 공백 제거
+            re.sub(r"[\s\W_]+", "", t),             # 기호 제거
+            re.sub(r"[^0-9a-zA-Z가-힣]+", "", t),    # 과격 정규화
         ]
-    # 고유화 & 짧은 것 제거
     seen, out = set(), []
     for x in cands:
         x = x.strip()
@@ -47,7 +47,7 @@ _STD_SECS = {
     "등장인물": "등장인물",
     "설정": "설정",
     "평가": "평가",
-    # 선택 동의어 확장
+    # 동의어
     "소개": "요약",
     "시놉시스": "본문",
     "스토리": "본문",
@@ -61,7 +61,7 @@ def _std_section_name(k: str) -> str:
 
 def _extract_section_texts(d: Dict[str, Any]) -> List[Tuple[str, str]]:
     """
-    반환: [(section, text), ...]  — ‘요약’ 우선, 그 외 섹션 전부 포함
+    반환: [(section, text), ...] — ‘요약’ 우선, 그 외 섹션 전부 포함
     """
     secs = d.get("sections") or {}
     out: List[Tuple[str, str]] = []
@@ -116,7 +116,6 @@ def _load_chunker():
                 return ("chars", None)
 
 def _chunk_fallback(text: str, max_chars: int = 1200, overlap: int = 200) -> List[str]:
-    """문자 기준 청킹 (+오버랩)"""
     out: List[str] = []
     if not text: return out
     n, s = len(text), 0
@@ -150,6 +149,8 @@ def main():
     ap.add_argument("--max-chars", type=int, default=1200, help="fallback chunk size (chars)")
     ap.add_argument("--overlap", type=int, default=200, help="fallback chunk overlap (chars)")
     ap.add_argument("--reset", action="store_true", help="drop & recreate collection before ingest")
+    ap.add_argument("--with-header", action="store_true",
+                    help="청크 본문 앞에 '[title] · [section]' 헤더를 텍스트로도 삽입(기본 off)")
     args = ap.parse_args()
 
     if args.reset:
@@ -159,11 +160,12 @@ def main():
             reset_collection()
 
     mode, chunker = _load_chunker()
-    embedder = EmbedAdapter()  # embeddings.py에서 CUDA 기본 사용
+    embedder = EmbedAdapter()  # embeddings.py의 백엔드 설정 사용
 
     staged: List[tuple[str, str, Dict[str, Any]]] = []
     total_docs = 0
     total_chunks = 0
+    doc_chunk_idx: Dict[str, int] = {}  # 각 문서의 청크 카운터
 
     with open(args.input, "r", encoding="utf-8") as f:
         for line in f:
@@ -185,7 +187,6 @@ def main():
                 "seed_title": seed_title,
                 "title_norm": _norm(title),
                 "seed_title_norm": _norm(seed_title),
-                # 리스트 -> 문자열 (구분자는 |)
                 "aliases_csv": "|".join(aliases),
                 "aliases_norm_csv": "|".join(_norm(a) for a in aliases),
                 "url": d.get("url") or "",
@@ -193,48 +194,73 @@ def main():
                 "sections_present": ",".join(sorted({s for s, _ in sec_texts})),
             }
 
-            # 섹션별로 프리앰블/청킹
             try:
                 if mode == "token":
                     for section, raw in sec_texts:
-                        pre = f"[{title}] · [{section}]\n"
-                        for ch in chunker(pre + raw, max_tokens=480, stride=120):
+                        header = f"[{title}] · [{section}]\n" if args.with_header else ""
+                        for ch in chunker(header + raw, max_tokens=480, stride=120):
+                            piece = getattr(ch, "text", None) or str(ch)
+                            idx = doc_chunk_idx.get(doc_id, 0); doc_chunk_idx[doc_id] = idx + 1
+                            chunk_hash = hashlib.sha1(piece.encode("utf-8")).hexdigest()[:8]
+                            vid = f"{doc_id}:{section}:{idx:04d}:{chunk_hash}"
+
                             m = dict(meta_base)
-                            m.update({"section": section, "subsection": getattr(ch, "meta", {}).get("subsection","")})
+                            m.update({"section": section, "subsection": getattr(ch, "meta", {}).get("subsection",""),
+                                      "chunk_id": f"{idx:04d}"})
                             m = {k: _to_scalar(v) for k, v in m.items()}
-                            staged.append((doc_id, getattr(ch, "text", None) or str(ch), m))
+                            staged.append((vid, piece, m))
+
                 elif mode == "make":
                     for section, raw in sec_texts:
-                        for sec, piece in chunker(raw, section=section, attach_header=True):
-                            m = dict(meta_base); m.update({"section": sec, "subsection": ""})
+                        for sec, piece in chunker(raw, section=section, attach_header=args.with_header):
+                            idx = doc_chunk_idx.get(doc_id, 0); doc_chunk_idx[doc_id] = idx + 1
+                            chunk_hash = hashlib.sha1(piece.encode("utf-8")).hexdigest()[:8]
+                            vid = f"{doc_id}:{sec}:{idx:04d}:{chunk_hash}"
+
+                            m = dict(meta_base); m.update({"section": sec, "subsection": "", "chunk_id": f"{idx:04d}"})
                             m = {k: _to_scalar(v) for k, v in m.items()}
-                            staged.append((doc_id, piece, m))
+                            staged.append((vid, piece, m))
+
                 elif mode == "fast":
                     for section, raw in sec_texts:
-                        for sec, piece in chunker(raw, section=section, target=900, max_chars=1600, overlap=150):
-                            m = dict(meta_base); m.update({"section": sec, "subsection": ""})
+                        for sec, piece in chunker(raw, section=section, target=900, max_chars=1600, overlap=150,
+                                                  attach_header=args.with_header):
+                            idx = doc_chunk_idx.get(doc_id, 0); doc_chunk_idx[doc_id] = idx + 1
+                            chunk_hash = hashlib.sha1(piece.encode("utf-8")).hexdigest()[:8]
+                            vid = f"{doc_id}:{sec}:{idx:04d}:{chunk_hash}"
+
+                            m = dict(meta_base); m.update({"section": sec, "subsection": "", "chunk_id": f"{idx:04d}"})
                             m = {k: _to_scalar(v) for k, v in m.items()}
-                            staged.append((doc_id, piece, m))
+                            staged.append((vid, piece, m))
+
                 else:
                     # 문자 폴백
                     for section, raw in sec_texts:
-                        pre = f"[{title}] · [{section}]\n"
-                        for piece in _chunk_fallback(pre + raw, args.max_chars, args.overlap):
-                            m = dict(meta_base); m.update({"section": section, "subsection": ""})
+                        header = f"[{title}] · [{section}]\n" if args.with_header else ""
+                        for piece in _chunk_fallback(header + raw, args.max_chars, args.overlap):
+                            idx = doc_chunk_idx.get(doc_id, 0); doc_chunk_idx[doc_id] = idx + 1
+                            chunk_hash = hashlib.sha1(piece.encode("utf-8")).hexdigest()[:8]
+                            vid = f"{doc_id}:{section}:{idx:04d}:{chunk_hash}"
+
+                            m = dict(meta_base); m.update({"section": section, "subsection": "", "chunk_id": f"{idx:04d}"})
                             m = {k: _to_scalar(v) for k, v in m.items()}
-                            staged.append((doc_id, piece, m))
+                            staged.append((vid, piece, m))
+
             except Exception:
-                # 폴백
+                # 완전 폴백
                 for section, raw in sec_texts:
-                    pre = f"[{title}] · [{section}]\n"
-                    for piece in _chunk_fallback(pre + raw, args.max_chars, args.overlap):
-                        m = dict(meta_base); m.update({"section": section, "subsection": ""})
+                    header = f"[{title}] · [{section}]\n" if args.with_header else ""
+                    for piece in _chunk_fallback(header + raw, args.max_chars, args.overlap):
+                        idx = doc_chunk_idx.get(doc_id, 0); doc_chunk_idx[doc_id] = idx + 1
+                        chunk_hash = hashlib.sha1(piece.encode("utf-8")).hexdigest()[:8]
+                        vid = f"{doc_id}:{section}:{idx:04d}:{chunk_hash}"
+
+                        m = dict(meta_base); m.update({"section": section, "subsection": "", "chunk_id": f"{idx:04d}"})
                         m = {k: _to_scalar(v) for k, v in m.items()}
-                        staged.append((doc_id, piece, m))
+                        staged.append((vid, piece, m))
 
             total_docs += 1
 
-            # 배치 업서트
             if len(staged) >= args.batch:
                 upsert_batch(staged, embedder, id_prefix=None)
                 total_chunks += len(staged)

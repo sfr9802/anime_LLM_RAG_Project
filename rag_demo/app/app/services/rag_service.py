@@ -1,22 +1,22 @@
-# app/app/services/rag_service.py
+
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import os, re, unicodedata, time
 import numpy as np
 import torch
+from collections import defaultdict
 
 try:
-    from sentence_transformers import CrossEncoder  # pip install sentence-transformers
+    from sentence_transformers import CrossEncoder
 except Exception:
-    CrossEncoder = None  # 미설치 시 자동 비활성
+    CrossEncoder = None
 
-from app.app.infra.vector.chroma_store import search as chroma_search
+from app.app.infra.vector.chroma_store import search as chroma_search, get_collection
 from app.app.services.adapters import flatten_chroma_result
 from app.app.domain.embeddings import embed_queries, embed_passages
 from app.app.infra.llm.provider import get_chat
 from app.app.configure import config
 
-# 모델 스키마 (표준 경로 우선)
 try:
     from app.app.domain.models.document_model import DocumentItem
     from app.app.domain.models.query_model import RAGQueryResponse
@@ -24,14 +24,11 @@ except Exception:
     from app.app.models.document_model import DocumentItem
     from app.app.models.query_model import RAGQueryResponse
 
-# 벡터 스코어 → [0,1] 유사도 변환 (vector 메트릭)
 from app.app.infra.vector.metrics import to_similarity
 
-# 품질 메트릭(dup_rate, 키 추출)
 try:
     from app.app.metrics.quality import dup_rate, keys_from_docs
 except Exception:
-    # metrics/quality.py가 없다면 안전 폴백
     def dup_rate(keys_topk: List[str]) -> float:
         k = len(keys_topk)
         return 0.0 if k <= 1 else 1.0 - (len(set(keys_topk)) / float(k))
@@ -45,19 +42,9 @@ except Exception:
                 out.append(m.get("seed_title") or m.get("parent") or m.get("title") or "")
         return out
 
-# --- 퍼지 매칭(rapidfuzz 있으면 사용, 없으면 difflib 폴백) --------------------------
-try:
-    from rapidfuzz import fuzz as _rf_fuzz
-    def _fuzzy(a: str, b: str) -> float:
-        return _rf_fuzz.partial_ratio(a, b) / 100.0
-except Exception:
-    from difflib import SequenceMatcher
-    def _fuzzy(a: str, b: str) -> float:
-        return SequenceMatcher(None, a, b).ratio()
-
-# --- 간단 정규화/쿼리 확장 ---------------------------------------------------------
+# ---------- helpers ----------
 def _norm(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s).lower()
+    s = unicodedata.normalize("NFKC", s or "").lower()
     return re.sub(r"[\s\W_]+", "", s, flags=re.UNICODE)
 
 _DEFAULT_ALIAS_MAP = {
@@ -68,7 +55,6 @@ _DEFAULT_ALIAS_MAP = {
 _ALIAS_MAP = getattr(config, "ALIAS_MAP", None) or _DEFAULT_ALIAS_MAP
 
 def _expand_queries(q: str) -> List[str]:
-    """원문 + 정규화 + 간단 별칭치환."""
     out = [q]
     nq = _norm(q)
     if nq != q:
@@ -76,7 +62,6 @@ def _expand_queries(q: str) -> List[str]:
     for k, vs in _ALIAS_MAP.items():
         if k in q:
             out.extend(vs)
-    # 고유화
     uniq, seen = [], set()
     for s in out:
         s = (s or "").strip()
@@ -88,19 +73,7 @@ def _expand_queries(q: str) -> List[str]:
 def _title_from_meta(meta: Dict[str, Any]) -> str:
     return meta.get("seed_title") or meta.get("parent") or meta.get("title") or ""
 
-def _title_boost(item: Dict[str, Any], qvars: List[str]) -> float:
-    """메타 타이틀 vs 확장쿼리 간 퍼지 스코어(0..1)."""
-    t = _title_from_meta(item.get("metadata") or {})
-    if not t:
-        return 0.0
-    tn = _norm(t)
-    best = 0.0
-    for s in qvars:
-        sn = _norm(s)
-        best = max(best, _fuzzy(tn, sn))
-    return float(best)
-
-# --- 유틸: 타이틀 캡/환경변수/섹션 쿼터 -------------------------------------------
+# ---------- tuning utils ----------
 def _cap_by_title(items: List[Dict[str, Any]], cap: int = 2) -> List[Dict[str, Any]]:
     if cap <= 0 or not items:
         return items
@@ -126,29 +99,120 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except Exception:
         return default
+    
+def _env_ints(name: str, default: List[int]) -> List[int]:
+    raw = os.getenv(name)
+    if not raw:
+        return list(default)
+    toks = [t.strip() for t in raw.replace(";", ",").split(",")]
+    out: List[int] = []
+    for t in toks:
+        if not t:
+            continue
+        try:
+            out.append(int(t))
+        except Exception:
+            pass
+    out = sorted(set(out))
+    return out or list(default)
+
+_RERANKER_SINGLETON = None
+_RERANKER_DEVICE = None
+ENS_MAX = int(os.getenv("RAG_ENS_MAX_COMBOS", "12"))
 
 class RagService:
-    def __init__(self):
+    def __init__(self, force_reranker: Optional[bool]=None):
         self.chat = get_chat()
-        self._last_space: str = "cosine"  # 최근 검색 벡터 공간 저장(점수 변환에 필요)
-        # 리랭커 세팅 (환경변수로 온/오프)
-        self._use_reranker = bool(int(os.getenv("RAG_USE_RERANK", "1")))
+        self._last_space: str = "cosine"
+        want = bool(int(os.getenv("RAG_USE_RERANK", "1")))
+        if force_reranker is not None:
+            want = bool(force_reranker)
         self._reranker = None
-        if self._use_reranker and CrossEncoder is not None:
+        if want and CrossEncoder is not None:
             dev = "cuda" if torch.cuda.is_available() else "cpu"
-            # 한국어 포함 멀티링구얼 성능/가성비 좋음
-            self._reranker = CrossEncoder("BAAI/bge-reranker-v2-m3", device=dev, max_length=512)
+            global _RERANKER_SINGLETON, _RERANKER_DEVICE
+            if _RERANKER_SINGLETON is None or _RERANKER_DEVICE != dev:
+                ce = CrossEncoder("BAAI/bge-reranker-v2-m3", device=dev, max_length=512)
+                if dev == "cuda" and os.getenv("RAG_RERANK_FP16", "1") == "1":
+                    try:
+                        ce.model.half()
+                    except Exception:
+                        pass
+                _RERANKER_SINGLETON = ce
+                _RERANKER_DEVICE = dev
+            self._reranker = _RERANKER_SINGLETON
 
-    # ------------------- 공통 유틸 -------------------
+    # ---------- common ----------
+    def _attach_embeddings(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        ids = [str(it.get("id") or "") for it in items if it.get("id")]
+        if not ids:
+            return items
+
+        coll = get_collection()
+        res = coll.get(ids=ids, include=["embeddings"])
+
+        # ❌ 금지: res.get("embeddings") or []
+        # ✅ 명시적 None 체크 + 리스트화
+        res_ids = res.get("ids")
+        embs = res.get("embeddings")
+
+        # 일부 구현은 np.ndarray로 반환할 수 있음 → 리스트로 변환
+        if res_ids is None:
+            res_ids = []
+        elif hasattr(res_ids, "tolist"):
+            res_ids = res_ids.tolist()
+
+        if embs is None:
+            embs = []
+        elif hasattr(embs, "tolist"):  # np.ndarray 등
+            embs = embs.tolist()
+
+        # 길이 불일치 방어
+        n = min(len(res_ids), len(embs))
+        emap = {str(res_ids[i]): embs[i] for i in range(n)}
+
+        for it in items:
+            _id = str(it.get("id") or "")
+            if _id in emap:
+                it["embedding"] = emap[_id]
+        return items
+
+
+    def _rrf_merge(self, ranked_lists: List[List[Dict[str, Any]]], K: int = 60) -> List[Dict[str, Any]]:
+        score = defaultdict(float)
+        keep: Dict[str, Dict[str, Any]] = {}
+        for lst in ranked_lists:
+            for r, it in enumerate(lst, start=1):
+                _id = str(it.get("id") or "")
+                if not _id:
+                    continue
+                score[_id] += 1.0 / (K + r)
+                if _id not in keep:
+                    keep[_id] = it
+        merged = list(keep.values())
+        merged.sort(key=lambda it: score.get(str(it.get("id") or ""), 0.0), reverse=True)
+        return merged
+
     def _mmr(self, q: str, items: List[Dict[str, Any]], k: int, lam: float = 0.5) -> List[Dict[str, Any]]:
-        """GPU(torch)로 MMR 계산."""
         if not items:
             return items
-        texts = [(it.get("text") or "") for it in items]
 
-        # 임베딩 -> numpy -> torch
-        cvs_np = np.array(embed_passages(texts))          # (n, d)
-        qv_np  = np.array(embed_queries([q]))[0]          # (d,)
+        vecs: List[np.ndarray] = []
+        use_db = True
+        for it in items:
+            emb = it.get("embedding")
+            if emb is None:
+                use_db = False
+                break
+            vecs.append(np.asarray(emb, dtype="float32"))
+
+        if use_db and vecs:
+            cvs_np = np.vstack(vecs)
+        else:
+            texts = [(it.get("text") or "") for it in items]
+            cvs_np = np.array(embed_passages(texts))
+
+        qv_np = np.array(embed_queries([q]))[0]
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         cvs = torch.from_numpy(cvs_np).to(device)
@@ -158,10 +222,9 @@ class RagService:
         if n <= k:
             return items[:k]
 
-        # cosine sim
         qn = torch.norm(qv) + 1e-8
         cn = torch.norm(cvs, dim=1) + 1e-8
-        sim_q = (cvs @ qv) / (qn * cn)  # (n,)
+        sim_q = (cvs @ qv) / (qn * cn)
 
         selected: List[int] = []
         mask = torch.zeros(n, dtype=torch.bool, device=device)
@@ -171,7 +234,6 @@ class RagService:
             else:
                 sel = cvs[torch.tensor(selected, device=device)]
                 seln = torch.norm(sel, dim=1) + 1e-8
-                # (n, s)
                 sim_div = (cvs @ sel.T) / (cn.unsqueeze(1) * seln.unsqueeze(0))
                 sim_div = sim_div.max(dim=1).values
                 mmr = lam * sim_q - (1 - lam) * sim_div
@@ -184,7 +246,6 @@ class RagService:
         return [items[i] for i in selected]
 
     def _dedup_and_score(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """doc_id(또는 title+section) 기준 중복 제거 + score 보정."""
         seen = set()
         out: List[Dict[str, Any]] = []
         for it in items:
@@ -198,12 +259,10 @@ class RagService:
             out.append(it)
         return out
 
-    # ───────────────── 리랭크/확장/컨피던스 ─────────────────
     def _rerank(self, q: str, items: List[Dict[str, Any]], k: int) -> List[Dict[str, Any]]:
-        """CrossEncoder로 최종 재정렬."""
         if not self._reranker or not items:
             return items[:k]
-        pairs = [(q, (it.get("text") or "")[:800]) for it in items]  # 지나친 길이 컷
+        pairs = [(q, (it.get("text") or "")[:800]) for it in items]
         bs = int(os.getenv("RAG_RERANK_BATCH", "64"))
         scores = self._reranker.predict(pairs, batch_size=bs, convert_to_numpy=True)
         for it, s in zip(items, scores):
@@ -211,7 +270,7 @@ class RagService:
         items.sort(key=lambda x: x.get("_ce", 0.0), reverse=True)
         return items[:k]
 
-    def _expand_same_doc(self, items: List[Dict[str, Any]], per_doc: int = 2) -> List[Dict[str, Any]]:
+    def _expand_same_doc(self, q: str, items: List[Dict[str, Any]], per_doc: int = 2) -> List[Dict[str, Any]]:
         """상위 문서(doc_id)의 다른 섹션/청크를 몇 개 더 끌어와 컨텍스트를 두텁게."""
         if not items:
             return items
@@ -222,13 +281,14 @@ class RagService:
                 doc_ids.append(did)
         extras: List[Dict[str, Any]] = []
         taken_per: Dict[str, int] = {}
-        for did in doc_ids[:3]:  # 상위 3개 문서만 확장
+        for did in doc_ids[:3]:
+            # 빈 쿼리 대신 원 쿼리를 사용해 거리/점수 일관성 유지
             res = chroma_search(
-                query="", n=per_doc * 6, where={"doc_id": did},
-                include_docs=True, include_metas=True, include_ids=True, include_distances=True
+                query=q, n=per_doc * 6, where={"doc_id": did},
+                include_docs=True, include_metas=True, include_ids=True,
+                include_distances=True
             )
             ext = flatten_chroma_result(res)
-            # 요약/본문 우선
             def _prio(x):
                 sec = (x.get("metadata") or {}).get("section") or ""
                 return {"요약": 0, "본문": 1}.get(sec, 2), -(x.get("score") or 0.0)
@@ -244,7 +304,6 @@ class RagService:
         return items + extras
 
     def _conf(self, items: List[Dict[str, Any]]) -> float:
-        """상위 몇 개의 CE/유사도로 컨피던스(0..1). 리랭커가 있으면 softmax 기반."""
         if not items:
             return 0.0
         ce = [it.get("_ce") for it in items[:5] if it.get("_ce") is not None]
@@ -252,7 +311,7 @@ class RagService:
             x = np.array(ce, dtype=np.float32)
             x = x - x.max()
             p = np.exp(x); p = p / (p.sum() + 1e-8)
-            return float(p[0])  # top1 확률
+            return float(p[0])
         arr = [it.get("score", 0.0) for it in items[:3]]
         if not arr:
             return 0.0
@@ -261,114 +320,162 @@ class RagService:
             return float(arr[0])
         return float(sum((a - lo) / (hi - lo) for a in arr) / len(arr))
 
-    # ------------------- 전략별 검색 -------------------
-    def _retrieve_baseline(
-        self, q: str, *, k: int, where: Optional[Dict[str, Any]],
-        candidate_k: Optional[int], use_mmr: bool, lam: float
-    ) -> List[Dict[str, Any]]:
-        """단일 쿼리 경로. 후보 폭을 넓혀 MMR→(CE) 적용."""
-        # 파라미터화
-        fetch_k = candidate_k or _env_int("RAG_FETCH_K", 160)            # 1차 후보(깊게)
-        mmr_pre_k = _env_int("RAG_MMR_PRE_K", 120)                       # MMR 입력 상한
-        mmr_k = _env_int("RAG_MMR_K", max(k * 4, 40))                    # MMR로 뽑을 수
-        title_cap = _env_int("RAG_TITLE_CAP", 2)                          # 타이틀당 상한
-        rerank_in = _env_int("RAG_RERANK_IN", 24)                         # 리랭커 입력 수
-
-        # 1) 깊게 긁기
+    # ---------- strategies ----------
+    def _retrieve_baseline(self, q: str, *, k: int, where: Optional[Dict[str, Any]],
+                       candidate_k: Optional[int], use_mmr: bool, lam: float) -> List[Dict[str, Any]]:
+        fetch_k   = candidate_k or _env_int("RAG_FETCH_K", 160)
         res = chroma_search(
             query=q, n=fetch_k, where=where,
-            include_docs=True, include_metas=True, include_ids=True, include_distances=True
+            include_docs=True, include_metas=True, include_ids=True,
+            include_distances=True
         )
         self._last_space = (res.get("space") or "cosine").lower()
-        items = flatten_chroma_result(res)
-        dedup = self._dedup_and_score(items)
+        dedup0 = self._dedup_and_score(flatten_chroma_result(res))
 
-        # 2) 타이틀 캡 → 다양화(MMR)
-        dedup = _cap_by_title(dedup, cap=title_cap)
-        if use_mmr:
-            pre = dedup[:min(len(dedup), mmr_pre_k)]
-            pool = self._mmr(q, pre, k=mmr_k, lam=lam)
+        cap_list      = _env_ints("RAG_TITLE_CAP",   [2])
+        prek_list     = _env_ints("RAG_MMR_PRE_K",   [120])
+        mmrk_list     = _env_ints("RAG_MMR_K",       [max(k * 4, 40)])
+        rerank_in_lst = _env_ints("RAG_RERANK_IN",   [24])
+        ENS_MAX       = int(os.getenv("RAG_ENS_MAX_COMBOS", "12"))
+
+        pools: List[List[Dict[str, Any]]] = []
+        if not use_mmr:
+            tried = 0
+            for cap in cap_list:
+                if tried >= ENS_MAX:
+                    break
+                dedup = _cap_by_title(dedup0, cap=cap)
+                pools.append(dedup[:max(k * 6, 72)])
+                tried += 1
         else:
-            pool = dedup[:max(k * 12, 120)]
+            tried = 0
+            for cap in cap_list:
+                if tried >= ENS_MAX:
+                    break
+                dedup = _cap_by_title(dedup0, cap=cap)
+                if not dedup:
+                    continue
+                prek_max = min(max(prek_list), len(dedup))
+                pre_base = self._attach_embeddings(dedup[:prek_max])
+                for prek in prek_list:
+                    if tried >= ENS_MAX:
+                        break
+                    prek = min(prek, len(pre_base))
+                    if prek <= 0:
+                        continue
+                    for mmrk in mmrk_list:
+                        if tried >= ENS_MAX:
+                            break
+                        mmrk = min(mmrk, prek)
+                        if mmrk <= 0:
+                            continue
+                        pre = pre_base[:prek]
+                        pools.append(self._mmr(q, pre, k=mmrk, lam=lam))
+                        tried += 1
 
-        # 3) 리랭커 입력 제한 후 최종 k
-        if self._reranker:
-            pool = pool[:min(len(pool), rerank_in)]
-            return self._rerank(q, pool, k)
+        merged = self._rrf_merge(pools, K=60) if len(pools) > 1 else (pools[0] if pools else [])
+        merged = self._dedup_and_score(merged)
+
+        rerank_in = min(max(rerank_in_lst), len(merged))
+        if self._reranker and rerank_in > 0:
+            return self._rerank(q, merged[:rerank_in], k)
         else:
-            return pool[:k]
+            return merged[:k]
 
-    def _retrieve_chroma_only(
-        self, q: str, *, k: int, where: Optional[Dict[str, Any]],
-        use_mmr: bool, lam: float
-    ) -> List[Dict[str, Any]]:
-        """
-        Chroma만으로 성능 보강:
-        - 멀티쿼리(원문+정규화+간단 별칭) 병렬 조회 → 유니온
-        - 타이틀 퍼지부스트(score와 가중 합성) → (MMR|CE)
-        """
+
+    def _retrieve_chroma_only(self, q: str, *, k: int, where: Optional[Dict[str, Any]],
+                          use_mmr: bool, lam: float) -> List[Dict[str, Any]]:
         qvars = _expand_queries(q)
 
-        # fetch 파라미터화
         base_n = _env_int("RAG_FETCH_K", max(k * 8, 80))
-        aux_n = _env_int("RAG_FETCH_K_AUX", max(k * 4, 40))
+        aux_n  = _env_int("RAG_FETCH_K_AUX", max(k * 4, 40))
 
+        lists: List[List[Dict[str, Any]]] = []
         resA = chroma_search(
             query=q, n=base_n, where=where,
-            include_docs=True, include_metas=True, include_ids=True, include_distances=True
+            include_docs=True, include_metas=True, include_ids=True,
+            include_distances=True
         )
         self._last_space = (resA.get("space") or "cosine").lower()
-        items = flatten_chroma_result(resA)
+        lists.append(flatten_chroma_result(resA))
 
         for qq in qvars:
             if qq == q:
                 continue
             res = chroma_search(
                 query=qq, n=aux_n, where=where,
-                include_docs=True, include_metas=True, include_ids=True, include_distances=True
+                include_docs=True, include_metas=True, include_ids=True,
+                include_distances=True
             )
-            items += flatten_chroma_result(res)
+            lists.append(flatten_chroma_result(res))
 
-        dedup = self._dedup_and_score(items)
+        # 1) 멀티쿼리 결합
+        items = self._rrf_merge(lists, K=60)
+        base  = self._dedup_and_score(items)
 
-        W_SIM = getattr(config, "RAG_W_SIM", 0.8)
-        W_TITLE = getattr(config, "RAG_W_TITLE", 0.2)
-        for it in dedup:
-            boost = _title_boost(it, qvars)
-            it["_combo"] = W_SIM * float(it.get("score") or 0.0) + W_TITLE * boost
-        dedup.sort(key=lambda x: x.get("_combo", 0.0), reverse=True)
+        # 2) 리스트형 하이퍼 파라미터 읽기
+        cap_list      = _env_ints("RAG_TITLE_CAP",   [2])
+        prek_list     = _env_ints("RAG_MMR_PRE_K",   [160])
+        mmrk_list     = _env_ints("RAG_MMR_K",       [max(k * 4, 40)])
+        rerank_in_lst = _env_ints("RAG_RERANK_IN",   [24])
+        ENS_MAX       = int(os.getenv("RAG_ENS_MAX_COMBOS", "12"))
 
-        # 타이틀 캡 + MMR 파라미터화
-        title_cap = _env_int("RAG_TITLE_CAP", 2)
-        mmr_pre_k = _env_int("RAG_MMR_PRE_K", 160)
-        mmr_k = _env_int("RAG_MMR_K", max(k * 4, 40))
-        rerank_in = _env_int("RAG_RERANK_IN", 24)
+        pools: List[List[Dict[str, Any]]] = []
 
-        dedup = _cap_by_title(dedup, cap=title_cap)
-        if use_mmr:
-            pre = dedup[:min(len(dedup), mmr_pre_k)]
-            pool = self._mmr(q, pre, k=mmr_k, lam=lam)
+        if not use_mmr:
+            # MMR OFF: title_cap 여러 값으로 풀 만들어서 합치기
+            tried = 0
+            for cap in cap_list:
+                if tried >= ENS_MAX:
+                    break
+                dedup = _cap_by_title(base, cap=cap)
+                pools.append(dedup[:max(k * 6, 72)])
+                tried += 1
         else:
-            pool = dedup[:max(k * 12, 120)]
+            # MMR ON: cap × prek × mmrk 조합 전부
+            tried = 0
+            for cap in cap_list:
+                if tried >= ENS_MAX:
+                    break
+                dedup = _cap_by_title(base, cap=cap)
+                if not dedup:
+                    continue
+                # 임베딩은 한 번만 붙이고 슬라이스 재활용
+                prek_max = min(max(prek_list), len(dedup))
+                pre_base = self._attach_embeddings(dedup[:prek_max])
 
-        if self._reranker:
-            pool = pool[:min(len(pool), rerank_in)]
-            return self._rerank(q, pool, k)
+                for prek in prek_list:
+                    if tried >= ENS_MAX:
+                        break
+                    prek = min(prek, len(pre_base))
+                    if prek <= 0:
+                        continue
+                    for mmrk in mmrk_list:
+                        if tried >= ENS_MAX:
+                            break
+                        mmrk = min(mmrk, prek)
+                        if mmrk <= 0:
+                            continue
+                        pre = pre_base[:prek]
+                        pools.append(self._mmr(q, pre, k=mmrk, lam=lam))
+                        tried += 1
+
+        # 3) 조합 풀을 RRF로 앙상블 → 스코어/중복 정리
+        merged = self._rrf_merge(pools, K=60) if len(pools) > 1 else (pools[0] if pools else [])
+        merged = self._dedup_and_score(merged)
+
+        # 4) 리랭커 컷도 리스트 지원(최댓값 사용)
+        rerank_in = min(max(rerank_in_lst), len(merged))
+        if self._reranker and rerank_in > 0:
+            return self._rerank(q, merged[:rerank_in], k)
         else:
-            return pool[:k]
+            return merged[:k]
 
-    # ------------------- 공개 API -------------------
-    def retrieve_docs(
-        self,
-        q: str,
-        *,
-        k: int = 6,
-        where: Optional[Dict[str, Any]] = None,
-        candidate_k: Optional[int] = None,
-        use_mmr: bool = True,
-        lam: float = 0.5,
-        strategy: str = "baseline",  # 'baseline' | 'chroma_only' | 'multiq'
-    ) -> List[Dict[str, Any]]:
+
+    # ---------- public ----------
+    def retrieve_docs(self, q: str, *, k: int = 6, where: Optional[Dict[str, Any]] = None,
+                      candidate_k: Optional[int] = None, use_mmr: bool = True,
+                      lam: float = 0.5, strategy: str = "baseline") -> List[Dict[str, Any]]:
         if strategy == "baseline":
             return self._retrieve_baseline(q, k=k, where=where, candidate_k=candidate_k, use_mmr=use_mmr, lam=lam)
         elif strategy in ("chroma_only", "multiq"):
@@ -419,37 +526,23 @@ class RagService:
             f"<질문>\n{question}\n"
         )
 
-    async def ask(
-        self,
-        q: str,
-        *,
-        k: int = 6,
-        where: Optional[Dict[str, Any]] = None,
-        candidate_k: Optional[int] = None,
-        use_mmr: bool = True,
-        lam: float = 0.5,
-        max_tokens: int = 512,
-        temperature: float = 0.2,
-        preview_chars: int = 600,
-        strategy: str = "baseline",
-    ) -> Dict[str, Any]:
+    async def ask(self, q: str, *, k: int = 6, where: Optional[Dict[str, Any]] = None,
+                  candidate_k: Optional[int] = None, use_mmr: bool = True,
+                  lam: float = 0.5, max_tokens: int = 512, temperature: float = 0.2,
+                  preview_chars: int = 600, strategy: str = "baseline") -> Dict[str, Any]:
         t_total0 = time.perf_counter()
 
-        # 1) 문서 검색 (+ latency)
         t0 = time.perf_counter()
         docs = self.retrieve_docs(q, k=k, where=where, candidate_k=candidate_k, use_mmr=use_mmr, lam=lam, strategy=strategy)
         t_retr_ms = (time.perf_counter() - t0) * 1000.0
 
-        # 1.1) 리랭크/선정 결과로 컨피던스 먼저 계산
         conf = self._conf(docs)
         min_conf = _env_float("RAG_MIN_CONF", float(os.getenv("RAG_MIN_CONF", "0.20")))
         if conf < min_conf:
             resp = RAGQueryResponse(question=q, answer="컨텍스트가 불충분합니다. 더 구체적인 단서가 필요합니다.", documents=[]).model_dump()
             resp["metrics"] = {
                 "k": k, "strategy": strategy, "use_reranker": bool(self._reranker),
-                "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": 0.0,
-                "llm_ms": 0.0,
+                "retriever_ms": round(t_retr_ms, 1), "expand_ms": 0.0, "llm_ms": 0.0,
                 "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
                 "conf": round(conf, 4),
                 "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
@@ -459,12 +552,10 @@ class RagService:
             }
             return resp
 
-        # 1.5) 동일 문서 확장 (+ latency)  — conf에는 영향 주지 않음
         t1_0 = time.perf_counter()
-        docs = self._expand_same_doc(docs, per_doc=2)
+        docs = self._expand_same_doc(q, docs, per_doc=2)
         t_expand_ms = (time.perf_counter() - t1_0) * 1000.0
 
-        # (선택) 섹션 쿼터 적용
         if os.getenv("RAG_USE_SECTION_QUOTA", "0") == "1":
             quota = {"요약": 2, "본문": 4}
             docs = self._quota_by_section(docs, quota, k)
@@ -474,10 +565,8 @@ class RagService:
             resp = RAGQueryResponse(question=q, answer="관련 컨텍스트가 없습니다.", documents=[]).model_dump()
             resp["metrics"] = {
                 "k": k, "strategy": strategy, "use_reranker": bool(self._reranker),
-                "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": round(t_expand_ms, 1),
-                "llm_ms": 0.0,
-                "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
+                "retriever_ms": round(t_retr_ms, 1), "expand_ms": round(t_expand_ms, 1),
+                "llm_ms": 0.0, "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
                 "conf": round(conf, 4),
                 "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
                 "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
@@ -486,7 +575,6 @@ class RagService:
             }
             return resp
 
-        # 2) 프롬프트 구성 & 호출 (+ LLM latency)
         prompt = self._render_prompt(q, context)
         messages = [
             {"role": "system", "content": "답변은 한국어. 제공된 컨텍스트만 사용. 모르면 모른다고 답하라."},
@@ -500,10 +588,8 @@ class RagService:
             resp = RAGQueryResponse(question=q, answer=f"LLM 호출 실패: {e}", documents=[]).model_dump()
             resp["metrics"] = {
                 "k": k, "strategy": strategy, "use_reranker": bool(self._reranker),
-                "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": round(t_expand_ms, 1),
-                "llm_ms": 0.0,
-                "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
+                "retriever_ms": round(t_retr_ms, 1), "expand_ms": round(t_expand_ms, 1),
+                "llm_ms": 0.0, "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
                 "conf": round(conf, 4),
                 "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
                 "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
@@ -512,7 +598,6 @@ class RagService:
             }
             return resp
 
-        # 3) 문서들을 DocumentItem으로 변환
         items: List[DocumentItem] = []
         space = self._last_space
         for d in docs:
@@ -523,7 +608,6 @@ class RagService:
             score = d.get("score")
             if score is None:
                 score = to_similarity(d.get("distance"), space=space)
-
             items.append(
                 DocumentItem(
                     id=str(d.get("id") or ""),
@@ -537,17 +621,11 @@ class RagService:
                     text=text[:1200],
                 )
             )
-
-        # 4) 스키마 응답 + 지표
         resp = RAGQueryResponse(question=q, answer=out, documents=items).model_dump()
         resp["metrics"] = {
-            "k": k,
-            "strategy": strategy,
-            "use_reranker": bool(self._reranker),
-            "retriever_ms": round(t_retr_ms, 1),
-            "expand_ms": round(t_expand_ms, 1),
-            "llm_ms": round(t_llm_ms, 1),
-            "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
+            "k": k, "strategy": strategy, "use_reranker": bool(self._reranker),
+            "retriever_ms": round(t_retr_ms, 1), "expand_ms": round(t_expand_ms, 1),
+            "llm_ms": round(t_llm_ms, 1), "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
             "conf": round(conf, 4),
             "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
             "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),

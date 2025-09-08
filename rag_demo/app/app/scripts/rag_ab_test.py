@@ -1,55 +1,40 @@
-# app/app/scripts/rag_ab_test.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import argparse, time, json, math, random, os
+import os, json, time, argparse, csv, itertools, random, math, contextlib
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import Dict, Any, List, Tuple
 
 from app.app.services.rag_service import RagService
 from app.app.metrics.quality import (
     keys_from_docs, hit_at_k, recall_at_k, dup_rate, p_percentile
 )
-# 추가: raw Chroma top-50 리콜 측정을 위해 직접 조회
 from app.app.services.adapters import flatten_chroma_result
 from app.app.infra.vector.chroma_store import search as chroma_search
 
-# ----- utils -----
+# ====== util ======
 def _norm(s: str) -> str:
     import unicodedata, re
     s = unicodedata.normalize("NFKC", s or "").lower()
     return re.sub(r"[\s\W_]+", "", s)
 
 def _mrr(retrieved: List[str], gold: List[str]) -> float:
-    G = { _norm(t) for t in gold if t }
+    G = {_norm(t) for t in gold if t}
     for i, t in enumerate(retrieved, 1):
         if _norm(t) in G:
             return 1.0 / i
     return 0.0
 
 def _ndcg(retrieved: List[str], gold: List[str], k: int) -> float:
-    G = { _norm(t) for t in gold if t }
-    rels = [1.0 if _norm(t) in G else 0.0 for t in retrieved[:k]]
-    # DCG: sum_{i=1..k} rel_i / log2(i+1)
-    dcg = sum(rel / math.log2(i+1) for i, rel in enumerate(rels, start=1))
-    # IDCG: perfect ranking
-    idcg = sum(1.0 / math.log2(i+1) for i in range(1, min(k, len(G)) + 1))
-    return (dcg / idcg) if idcg > 0 else 0.0
+    G = {_norm(t) for t in gold if t}
+    dcg = 0.0
+    for i, t in enumerate(retrieved[:k], 1):
+        rel = 1.0 if _norm(t) in G else 0.0
+        if rel:
+            dcg += 1.0 / math.log2(i + 1)
+    ideal_hits = min(len(G), k)
+    idcg = sum(1.0 / math.log2(i + 1) for i in range(1, ideal_hits + 1))
+    return dcg / idcg if idcg > 0 else 0.0
 
-def _bootstrap_ci(diffs: List[float], iters: int = 2000, alpha: float = 0.05) -> Tuple[float,float,float]:
-    if not diffs:
-        return (0.0, 0.0, 0.0)
-    boots = []
-    n = len(diffs)
-    for _ in range(iters):
-        sample = [diffs[random.randrange(n)] for _ in range(n)]
-        boots.append(sum(sample)/n)
-    boots.sort()
-    mean = sum(diffs)/n
-    lo = boots[int((alpha/2)*iters)]
-    hi = boots[int((1-alpha/2)*iters)]
-    return (mean, lo, hi)
-
-# ----- query synth from metadata -----
 def _split_csv(v) -> List[str]:
     if not v: return []
     if isinstance(v, list):
@@ -75,7 +60,6 @@ def _make_queries_from_meta(m: Dict) -> List[str]:
         seen.add(q); uniq.append(q)
     return uniq
 
-# ----- sample metadata from Chroma -----
 def _sample_from_chroma(max_docs: int, section_hint: str = "요약") -> List[Dict]:
     from app.app.infra.vector.chroma_store import get_collection
     coll = get_collection()
@@ -96,6 +80,7 @@ def _sample_from_chroma(max_docs: int, section_hint: str = "요약") -> List[Dic
             offset += len(got_ids)
             if len(metas) >= max_docs: break
     except Exception:
+        # fallback: 전체에서 수집 후 section 필터
         metas, ids = [], []
         offset = 0
         while len(metas) < max_docs:
@@ -125,7 +110,6 @@ def _sample_from_chroma(max_docs: int, section_hint: str = "요약") -> List[Dic
     random.shuffle(uniq)
     return uniq
 
-# ----- raw chroma recall@50 (pre-rerank, pre-MMR) -----
 def _recall50_raw(q: str, gold: List[str], match_by: str) -> float:
     res = chroma_search(
         query=q, n=50, where=None,
@@ -135,138 +119,245 @@ def _recall50_raw(q: str, gold: List[str], match_by: str) -> float:
     keys = keys_from_docs(items, by=("title" if match_by == "title" else "doc"))
     return recall_at_k(keys, gold, 50)
 
-# ----- pre-rerank recall@50 for a strategy (MMR/캡까지 반영, CE만 비활성) -----
-def _recall50_prerank_for_strategy(q: str, gold: List[str], strategy: str, match_by: str, svc_nr: RagService) -> float:
+@contextlib.contextmanager
+def patched_environ(env_patch: Dict[str, Any]):
+    old = {}
     try:
-        docs50 = svc_nr.retrieve_docs(q, k=50, strategy=strategy, use_mmr=True)
-        keys = keys_from_docs(docs50, by=("title" if match_by == "title" else "doc"))
-        return recall_at_k(keys, gold, 50)
-    except Exception:
-        return 0.0
+        for k, v in env_patch.items():
+            old[k] = os.environ.get(k)
+            os.environ[k] = str(v)
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
 
-# ----- main A/B -----
-def run(max_docs: int, k: int, stratA: str, stratB: str, seed: int = 42,
-        section_hint: str = "요약", match_by: str = "title", report: str = "B"):
-    random.seed(seed)
-    svc = RagService()  # 기본(환경설정대로, 보통 리랭커 활성)
-
-    # 리랭커 비활성 인스턴스(프리랭크 측정용)
-    _orig = os.environ.get("RAG_USE_RERANK")
-    os.environ["RAG_USE_RERANK"] = "0"
-    svc_nr = RagService()
-    if _orig is None:
-        del os.environ["RAG_USE_RERANK"]
+# ====== evaluation ======
+def evaluate_config(dev_rows: List[Tuple[str, List[str]]],
+                    cfg: Dict[str, Any],
+                    envp: Dict[str, Any],
+                    reranker: str = "keep") -> Dict[str, Any]:
+    """
+    dev_rows: [(query, gold_titles_or_docs), ...]
+    cfg: strategy/k/use_mmr/lam/candidate_k
+    envp: RAG_* 환경 변수 dict
+    reranker: "keep" | "on" | "off"
+    """
+    # 리랭커 모드 고정
+    if reranker == "on":
+        os.environ["RAG_USE_RERANK"] = "1"
+    elif reranker == "off":
+        os.environ["RAG_USE_RERANK"] = "0"
     else:
-        os.environ["RAG_USE_RERANK"] = _orig
+        # keep: 건드리지 않음
+        pass
 
-    metas = _sample_from_chroma(max_docs=max_docs, section_hint=section_hint)
+    with patched_environ(envp):
+        svc = RagService()
 
-    rows = []
-    for m in metas:
-        gold = [ (m.get("seed_title") or m.get("title") or "") ] if match_by == "title" else [ (m.get("doc_id") or "") ]
-        queries = _make_queries_from_meta(m)
-        if not queries or not gold or not gold[0]:
-            continue
-        q = random.choice(queries)
+        hits, recs, mrrs, ndcgs, lats, dups = [], [], [], [], [], []
+        rec50_raw_vals = []
 
-        # A/B 최종(현재 설정, 보통 리랭커 on)
-        t0 = time.perf_counter(); A = svc.retrieve_docs(q, k=k, strategy=stratA); tA = time.perf_counter()-t0
-        t0 = time.perf_counter(); B = svc.retrieve_docs(q, k=k, strategy=stratB); tB = time.perf_counter()-t0
+        for q, gold in dev_rows:
+            t0 = time.perf_counter()
+            docs = svc.retrieve_docs(
+                q,
+                k=cfg["k"],
+                where=None,
+                candidate_k=cfg.get("candidate_k"),
+                use_mmr=cfg["use_mmr"],
+                lam=cfg["lam"],
+                strategy=cfg["strategy"],
+            )
+            dt = (time.perf_counter() - t0) * 1000.0
+            keys = keys_from_docs(docs, by=("title" if cfg["match_by"]=="title" else "doc"))
 
-        keysA = keys_from_docs(A, by=("title" if match_by=="title" else "doc"))
-        keysB = keys_from_docs(B, by=("title" if match_by=="title" else "doc"))
+            hits.append(hit_at_k(keys, gold, cfg["k"]))
+            recs.append(recall_at_k(keys, gold, cfg["k"]))
+            mrrs.append(_mrr(keys, gold))
+            ndcgs.append(_ndcg(keys, gold, cfg["k"]))
+            lats.append(dt)
+            dups.append(dup_rate(keys))
 
-        # 추가 지표: raw chroma와 pre-rerank(CE off, k=50)
-        rec50_raw = _recall50_raw(q, gold, match_by)
-        rec50_preA = _recall50_prerank_for_strategy(q, gold, stratA, match_by, svc_nr)
-        rec50_preB = _recall50_prerank_for_strategy(q, gold, stratB, match_by, svc_nr)
+            # raw@50 (CE/MMR 전)
+            rec50_raw_vals.append(_recall50_raw(q, gold, cfg["match_by"]))
 
-        rows.append({
-            "q": q, "gold": gold, "k": k,
-            "hitA": hit_at_k(keysA, gold, k),     "hitB": hit_at_k(keysB, gold, k),
-            "mrrA": _mrr(keysA, gold),            "mrrB": _mrr(keysB, gold),
-            "ndcgA": _ndcg(keysA, gold, k),       "ndcgB": _ndcg(keysB, gold, k),
-            "latA_ms": tA*1000.0,                 "latB_ms": tB*1000.0,
-            "dupA": dup_rate(keysA),              "dupB": dup_rate(keysB),
-            "keysA": keysA, "keysB": keysB,
-            # 추가
-            "rec50_raw": rec50_raw,
-            "rec50_preA": rec50_preA,
-            "rec50_preB": rec50_preB,
-        })
+        n = len(dev_rows) or 1
+        metrics = dict(
+            hit_at_k=sum(hits)/n,
+            recall_at_k=sum(recs)/n,
+            mrr=sum(mrrs)/n,
+            ndcg=sum(ndcgs)/n,
+            p95=p_percentile(lats, 95.0),
+            dup_rate=sum(dups)/n,
+            recall50_raw=sum(rec50_raw_vals)/n
+        )
+        return metrics
 
-    # aggregate
-    def _agg(keyA, keyB, bigger=True):
-        A = [r[keyA] for r in rows]; B = [r[keyB] for r in rows]
-        n = len(A) or 1
-        meanA = sum(A)/n if A else 0.0
-        meanB = sum(B)/n if B else 0.0
-        diffs = [b-a for a,b in zip(A,B)]
-        mean, lo, hi = _bootstrap_ci(diffs) if diffs else (0.0, 0.0, 0.0)
-        rel = (meanB - meanA) / (meanA + 1e-12) * 100.0 if meanA else 0.0
-        wins = sum(1 for a,b in zip(A,B) if (b>a if bigger else b<a))
-        ties = sum(1 for a,b in zip(A,B) if b==a)
-        winrate = (wins + 0.5*ties) / (len(A) if A else 1)
-        return dict(meanA=meanA, meanB=meanB, rel_pct=rel, diff_mean=mean, ci95=(lo,hi), winrate=winrate)
-
-    R_hit  = _agg("hitA","hitB", True)
-    R_mrr  = _agg("mrrA","mrrB", True)
-    R_ndcg = _agg("ndcgA","ndcgB", True)
-    R_lat  = _agg("latA_ms","latB_ms", False)
-
-    # README용 품질 지표(리포트 타깃: A or B)
-    keys_key = f"keys{report}"
-    lat_key  = f"lat{report}_ms"
-    rec5 = sum(recall_at_k(r[keys_key], r["gold"], 5) for r in rows) / (len(rows) or 1)
-    dup  = sum(dup_rate(r[keys_key]) for r in rows) / (len(rows) or 1)
-    p95  = p_percentile([r[lat_key] for r in rows if isinstance(r.get(lat_key), (int,float))], 95.0)
-
-    # 추가 집계: recall@50 (raw / pre-A / pre-B)
-    rec50_raw_mean = sum(r.get("rec50_raw", 0.0) for r in rows) / (len(rows) or 1)
-    rec50_preA_mean = sum(r.get("rec50_preA", 0.0) for r in rows) / (len(rows) or 1)
-    rec50_preB_mean = sum(r.get("rec50_preB", 0.0) for r in rows) / (len(rows) or 1)
-
-    print(f"\n--- Report ({report}) ---")
-    print(f"recall@5          {rec5:.3f}")
-    print(f"recall@50(raw)    {rec50_raw_mean:.3f}")
-    print(f"recall@50(pre-A)  {rec50_preA_mean:.3f}")
-    print(f"recall@50(pre-B)  {rec50_preB_mean:.3f}")
-    print(f"p95               {p95:.0f} ms")
-    print(f"dup_rate          {dup:.3f}")
-
-    print(f"\n=== Self A/B on Chroma (N={len(rows)}, k={k}, section='{section_hint}', by={match_by}) ===")
-    def pr(tag, R):
-        print(f"{tag:10s} | A={R['meanA']:.4f}  B={R['meanB']:.4f}  Δ%={R['rel_pct']:.2f}%  "
-              f"Δ={R['diff_mean']:.4f}  CI95=({R['ci95'][0]:.4f},{R['ci95'][1]:.4f})  win={R['winrate']:.2%}")
-    pr("Hit@k", R_hit); pr("MRR", R_mrr); pr("nDCG", R_ndcg); pr("Latency", R_lat)
-
-    out = Path(f"ab_chroma_self_{stratA}_vs_{stratB}_k{k}_{match_by}_{section_hint or 'all'}_{report}.json")
-    out.write_text(json.dumps({
-        "rows": rows,
-        "summary": {
-            "hit": R_hit, "mrr": R_mrr, "ndcg": R_ndcg, "lat_ms": R_lat,
-            "quality": {
-                "report": report, "by": match_by,
-                "recall@5": round(rec5, 4),
-                "recall@50_raw": round(rec50_raw_mean, 4),
-                "recall@50_preA": round(rec50_preA_mean, 4),
-                "recall@50_preB": round(rec50_preB_mean, 4),
-                "p95_ms": round(p95, 1), "dup_rate": round(dup, 4)
-            }
-        }
-    }, ensure_ascii=False, indent=2), encoding="utf8")
-    print(f"\nSaved: {out.resolve()}")
-
-if __name__ == "__main__":
+# ====== main (grid sweep) ======
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--N", type=int, default=200, help="샘플링할 문서 수(=쿼리 수)")
-    ap.add_argument("--k", type=int, default=6)
-    ap.add_argument("--A", default="baseline", help="전략 A (baseline|chroma_only)")
-    ap.add_argument("--B", default="chroma_only", help="전략 B (baseline|chroma_only)")
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--section", default="요약", help="샘플링할 섹션 필터 (빈문자열이면 전체)")
+    ap.add_argument("--section", default="요약", help="섹션 힌트(''이면 전체)")
     ap.add_argument("--by", choices=["title","doc"], default="title", help="평가 매칭 기준")
-    ap.add_argument("--report", choices=["A","B"], default="B", help="품질 지표를 어느 전략 기준으로 낼지")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--outdir", default="tune_out")
+    ap.add_argument("--grid_json", default="", help="그리드 정의 JSON 파일 경로(없으면 내장 기본값)")
+    ap.add_argument("--reranker", choices=["keep","on","off"], default="keep")
+    # 스코어 가중치
+    ap.add_argument("--w_recall", type=float, default=0.6)
+    ap.add_argument("--w_mrr", type=float, default=0.2)
+    ap.add_argument("--w_ndcg", type=float, default=0.2)
+    ap.add_argument("--w_dup", type=float, default=0.1)
+    ap.add_argument("--w_lat", type=float, default=0.0)
+    ap.add_argument("--lat_target_ms", type=float, default=600.0)
     args = ap.parse_args()
-    run(max_docs=args.N, k=args.k, stratA=args.A, stratB=args.B, seed=args.seed,
-        section_hint=args.section, match_by=args.by, report=args.report)
+
+    random.seed(args.seed)
+    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
+
+    # 1) dev 쿼리 셋 만들기(Chroma 메타 → 쿼리 합성)
+    metas = _sample_from_chroma(args.N, section_hint=args.section)
+    dev_rows: List[Tuple[str, List[str]]] = []
+    for m in metas:
+        gold = [ (m.get("seed_title") or m.get("title") or "") ] if args.by=="title" \
+               else [ (m.get("doc_id") or "") ]
+        qs = _make_queries_from_meta(m)
+        if not gold or not gold[0] or not qs: 
+            continue
+        q = random.choice(qs)
+        dev_rows.append((q, gold))
+
+    # 2) 그리드 불러오기
+    if args.grid_json and Path(args.grid_json).exists():
+        grid = json.loads(Path(args.grid_json).read_text("utf-8"))
+    else:
+        # 기본값(필요 시 파일로 빼서 쓰면 됨)
+        grid = {
+            "strategy": ["baseline", "chroma_only"],
+            "k": [4, 6, 8, 10, 12],
+            "use_mmr": [True, False],
+            "lam": [0.0, 0.2, 0.4, 0.6],
+            "candidate_k": [80, 120, 160, 240],   # baseline에서만 의미
+            # env 파라미터
+            "RAG_TITLE_CAP": [1, 2, 3],
+            "RAG_MMR_PRE_K": [60, 120, 160],
+            "RAG_MMR_K": [40, 80, 120],
+            "RAG_RERANK_IN": [16, 24, 32],
+            "RAG_FETCH_K": [80, 120, 160, 200],
+            "RAG_FETCH_K_AUX": [40, 80, 120],
+        }
+
+    # 3) 그리드 전개
+    keys_cfg = ["strategy","k","use_mmr","lam","candidate_k"]
+    keys_env = ["RAG_TITLE_CAP","RAG_MMR_PRE_K","RAG_MMR_K","RAG_RERANK_IN","RAG_FETCH_K","RAG_FETCH_K_AUX"]
+
+    space_cfg = [ (k, grid.get(k, [None])) for k in keys_cfg ]
+    space_env = [ (k, grid.get(k, [None])) for k in keys_env ]
+
+    combos_cfg = list(itertools.product(*[v for _, v in space_cfg]))
+    combos_env = list(itertools.product(*[v for _, v in space_env]))
+
+    # 4) 스윕
+    results: List[Dict[str, Any]] = []
+    best: Dict[str, Any] = {}
+    best_score = -1e9
+
+    # 이전 베스트(롤백 대비)
+    best_path = outdir / "retrieval.best.json"
+    last_good = outdir / "retrieval.last_good.json"
+    prev = json.loads(best_path.read_text("utf-8")) if best_path.exists() else None
+    prev_score = prev["_score"] if prev else -1e9
+
+    total_trials = 0
+    for vals_cfg in combos_cfg:
+        cfg = dict(zip(keys_cfg, vals_cfg))
+        # 불필요 파라미터 정리
+        if cfg.get("strategy") != "baseline":
+            cfg["candidate_k"] = None
+        cfg["match_by"] = args.by
+
+        for vals_env in combos_env:
+            envp = dict(zip(keys_env, vals_env))
+            # None 값 제거
+            cfg_clean = {k:v for k,v in cfg.items() if v is not None}
+            env_clean = {k:str(v) for k,v in envp.items() if v is not None}
+
+            metrics = evaluate_config(dev_rows, cfg_clean, env_clean, reranker=args.reranker)
+
+            # 스코어: 가중 합 - 패널티
+            lat_pen = max(0.0, (metrics["p95"] - args.lat_target_ms) / args.lat_target_ms)
+            score = (
+                args.w_recall * metrics["recall_at_k"] +
+                args.w_mrr    * metrics["mrr"] +
+                args.w_ndcg   * metrics["ndcg"] -
+                args.w_dup    * metrics["dup_rate"] -
+                args.w_lat    * lat_pen
+            )
+
+            row = dict(
+                score=score,
+                cfg=cfg_clean,
+                env=env_clean,
+                metrics=metrics
+            )
+            results.append(row)
+            total_trials += 1
+
+            if score > best_score:
+                best_score = score
+                best = row
+
+    # 5) 결과 저장(CSV + best/rollback)
+    csv_path = outdir / "results.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["score","strategy","k","use_mmr","lam","candidate_k",
+                    "p95","recall@k","mrr","ndcg","dup","recall50_raw",
+                    "RAG_TITLE_CAP","RAG_MMR_PRE_K","RAG_MMR_K","RAG_RERANK_IN","RAG_FETCH_K","RAG_FETCH_K_AUX"])
+        for r in sorted(results, key=lambda x: x["score"], reverse=True):
+            c, e, m = r["cfg"], r["env"], r["metrics"]
+            w.writerow([
+                f"{r['score']:.6f}",
+                c.get("strategy"), c.get("k"), c.get("use_mmr"), c.get("lam"), c.get("candidate_k"),
+                f"{m['p95']:.1f}", f"{m['recall_at_k']:.6f}", f"{m['mrr']:.6f}", f"{m['ndcg']:.6f}", f"{m['dup_rate']:.6f}",
+                f"{m['recall50_raw']:.6f}",
+                e.get("RAG_TITLE_CAP"), e.get("RAG_MMR_PRE_K"), e.get("RAG_MMR_K"),
+                e.get("RAG_RERANK_IN"), e.get("RAG_FETCH_K"), e.get("RAG_FETCH_K_AUX"),
+            ])
+
+    # 롤백 파일 백업
+    if best_path.exists():
+        last_good.write_text(best_path.read_text("utf-8"), encoding="utf-8")
+
+    # 개선 확인(이전 대비 1%↑ 또는 recall@k +0.01)
+    improved = True
+    if prev:
+        improved = (best_score >= prev_score * 1.01) or (
+            best["metrics"]["recall_at_k"] >= prev.get("metrics", {}).get("recall_at_k", 0.0) + 0.01
+        )
+
+    best_out = {
+        "_score": best_score,
+        "cfg": best.get("cfg", {}),
+        "env": best.get("env", {}),
+        "metrics": best.get("metrics", {}),
+        "reranker_mode": args.reranker,
+        "N": len(dev_rows),
+        "by": args.by,
+        "section": args.section,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "trials": total_trials
+    }
+    best_path.write_text(json.dumps(best_out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not improved and last_good.exists():
+        # 롤백
+        best_path.write_text(last_good.read_text("utf-8"), encoding="utf-8")
+
+    print(f"[BEST] score={best_score:.6f}")
+    print(json.dumps(best_out, ensure_ascii=False, indent=2))
+    print(f"\nSaved CSV: {csv_path.resolve()}\nSaved BEST: {best_path.resolve()}")
+
+if __name__ == "__main__":
+    main()

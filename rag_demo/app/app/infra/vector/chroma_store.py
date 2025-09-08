@@ -357,11 +357,15 @@ def upsert_batch(
     embs = emb_fn(docs)
     upsert(ids, docs, metas, embs)
 
-def _build_include(include_docs: bool, include_metas: bool, include_distances: bool) -> Optional[List[str]]:
+def _build_include(include_docs: bool,
+                   include_metas: bool,
+                   include_distances: bool,
+                   include_embeddings: bool) -> Optional[List[str]]:
     include: List[str] = []
-    if include_docs: include.append("documents")
-    if include_metas: include.append("metadatas")
-    if include_distances: include.append("distances")
+    if include_docs:       include.append("documents")
+    if include_metas:      include.append("metadatas")
+    if include_distances:  include.append("distances")
+    if include_embeddings: include.append("embeddings")  # ← 추가
     if not include:
         return None
     return [x for x in include if x in _VALID_INCLUDE] or None
@@ -377,6 +381,7 @@ def search(
     include_metas: bool = True,
     include_ids: bool = True,  # 유지하되 무시(Chroma 0.5+에선 include로 금지; ids는 항상 반환)
     include_distances: bool = True,
+    include_embeddings: bool = False,   # ← 추가
 ) -> Dict[str, Any]:
     """
     기본: query_texts(컬렉션 EF 경유)
@@ -388,7 +393,7 @@ def search(
     if (not query) and (query_embeddings is None):
         raise ValueError("either 'query' (text) or 'query_embeddings' must be provided")
 
-    include = _build_include(include_docs, include_metas, include_distances)
+    include = _build_include(include_docs, include_metas, include_distances, include_embeddings)
     if include_ids:
         log.debug("[Chroma] include_ids=True (ignored; ids are returned by default)")
 
