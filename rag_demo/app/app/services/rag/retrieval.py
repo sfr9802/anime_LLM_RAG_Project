@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Retrieval strategies and helpers for RagService."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import os
 
 from app.app.services.adapters import flatten_chroma_result
@@ -211,6 +211,63 @@ def _retrieve_chroma_only(
         return merged[:k]
 
 
+class BaselineStrategy:
+    """Retrieve documents using the baseline strategy."""
+
+    def __call__(
+        self,
+        svc: Any,
+        q: str,
+        *,
+        k: int,
+        where: Optional[Dict[str, Any]],
+        candidate_k: Optional[int],
+        use_mmr: bool,
+        lam: float,
+    ) -> List[Dict[str, Any]]:
+        return _retrieve_baseline(
+            svc,
+            q,
+            k=k,
+            where=where,
+            candidate_k=candidate_k,
+            use_mmr=use_mmr,
+            lam=lam,
+        )
+
+
+class ChromaOnlyStrategy:
+    """Retrieve documents using only Chroma search."""
+
+    def __call__(
+        self,
+        svc: Any,
+        q: str,
+        *,
+        k: int,
+        where: Optional[Dict[str, Any]],
+        candidate_k: Optional[int],
+        use_mmr: bool,
+        lam: float,
+    ) -> List[Dict[str, Any]]:
+        # ``candidate_k`` is accepted for interface compatibility but ignored.
+        return _retrieve_chroma_only(
+            svc,
+            q,
+            k=k,
+            where=where,
+            use_mmr=use_mmr,
+            lam=lam,
+        )
+
+
+_DEFAULT_STRATEGIES: Dict[str, Any] = {
+    "baseline": BaselineStrategy(),
+    "chroma_only": ChromaOnlyStrategy(),
+    "multiq": ChromaOnlyStrategy(),
+}
+
+
 def retrieve_docs(
     self,
     q: str,
@@ -220,30 +277,35 @@ def retrieve_docs(
     candidate_k: Optional[int] = None,
     use_mmr: bool = True,
     lam: float = 0.5,
-    strategy: str = "baseline",
+    strategy: Union[str, Any] = "baseline",
 ) -> List[Dict[str, Any]]:
-    if strategy == "baseline":
-        return _retrieve_baseline(
-            self,
-            q,
-            k=k,
-            where=where,
-            candidate_k=candidate_k,
-            use_mmr=use_mmr,
-            lam=lam,
-        )
-    elif strategy in ("chroma_only", "multiq"):
-        return _retrieve_chroma_only(
-            self,
-            q,
-            k=k,
-            where=where,
-            use_mmr=use_mmr,
-            lam=lam,
-        )
+    """Retrieve documents using the specified strategy.
+
+    ``strategy`` may be a string key for built-in strategies or a callable
+    implementing the same interface as :class:`BaselineStrategy`.
+    """
+
+    if isinstance(strategy, str):
+        strat = _DEFAULT_STRATEGIES.get(strategy)
+        if strat is None:
+            raise ValueError(f"unknown strategy: {strategy}")
     else:
-        raise ValueError(f"unknown strategy: {strategy}")
+        strat = strategy
+
+    return strat(
+        self,
+        q,
+        k=k,
+        where=where,
+        candidate_k=candidate_k,
+        use_mmr=use_mmr,
+        lam=lam,
+    )
 
 
-__all__ = ["retrieve_docs"]
+__all__ = [
+    "retrieve_docs",
+    "BaselineStrategy",
+    "ChromaOnlyStrategy",
+]
 
