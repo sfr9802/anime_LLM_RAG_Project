@@ -19,14 +19,7 @@ From data crawling to vector DB tuning, LLM prompting, and secure API design.
 
 ### 1. RAG Backend API (2025)
 
-<<<<<<< Updated upstream
-**품질 지표 2025-09-09 기준**:  
-- recall@5 **0.3**  
-- p95 **50ms**  
-- dup_rate **0.07**
-=======
 > FastAPI 기반 모듈화된 RAG 백엔드. 검색/재랭킹/응답 생성을 모두 지원.
->>>>>>> Stashed changes
 
 - `/ingest`: 문서 업서트 (Mongo + Chroma)
 - `/retrieve`: 임베딩 검색 + (선택) MMR
@@ -55,7 +48,7 @@ POST /retrieve
 
 > 나무위키 기반 대규모 문서 수집 및 전처리 → RAG 최적화 JSONL 생성.
 
-- 크롤링 대상: 애니메이션 관련 문서 7,700건 (2006~2025)
+- 크롤링 대상: 애니메이션 관련 문서 7,700건 (2006~2025), title 1,764건
 - 주요 처리:
   - 등장인물/설정 등 하위 링크 재귀 수집
   - 라이선스/푸터/광고 제거
@@ -75,19 +68,82 @@ POST /retrieve
 - `@AuthenticationPrincipal` 타입 분리 처리 (OAuth2 vs JWT)
 - React에서 받은 토큰을 Axios global header에 설정
 
-🖼️ 시퀀스 다이어그램
+---
+
+## 📮 API Overview
+
+This RAG backend exposes modular endpoints for **retrieval**, **LLM answering**, **debugging**, and **admin ingestion**.  
+You can interact via `/rag/*`, `/debug/*`, and `/admin/ingest/*` routes.
+
+### 🔗 주요 엔드포인트 요약
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/rag/ask` | `POST` | End-to-end RAG (search + LLM answer) |
+| `/rag/query` | `POST` | Retrieval only |
+| `/rag/query/debug` | `POST` | Retrieval + document context |
+| `/exp/search` | `POST` | Direct embedding search |
+| `/debug/retrieve` | `POST` | Internal vector search API |
+| `/debug/eval_hit` | `POST` | Eval goldset against vector DB |
+| `/debug/rag-ask` | `POST` | RAG answer (internal) |
+| `/admin/ingest/start` | `POST` | Start ingestion job |
+| `/admin/ingest/{job_id}` | `GET` | Check ingestion status |
+
+📁 관련 코드 위치:
+```txt
+├── app/
+│   └── api/
+│       ├── rag_router.py        ← /rag/ask, /rag/healthz
+│       ├── query_router.py      ← /rag/query
+│       ├── search_router.py     ← /exp/search
+│       ├── debug_router.py      ← /debug/*
+│       └── admin_ingest_router.py ← /admin/ingest/*
+```
+
+### 🔍 Sample: `/rag/ask`
+
+```http
+POST /rag/ask?k=6&use_mmr=true&lam=0.5&max_tokens=512&temperature=0.2
+Authorization: Bearer ACCESS
+
+{
+  "question": "신이 된 히로인의 서사가 있는 애니메이션은?"
+}
+```
+
+Response:
+```json
+{
+  "question": "신이 된 히로인의 서사가 있는 애니메이션은?",
+  "answer": "스즈미야 하루히의 우울",
+  "documents": [
+    { "title": "스즈미야 하루히의 우울", "score": 0.83, ... },
+    ...
+  ]
+}
+```
+
+---
+
+## 🖼️ Sequence Diagrams
 
 #### 🔐 로그인 흐름 (OAuth2 → JWT → OTC 발급)
 
-![로그인](./로그인.png)
+![로그인](/image/auth_login_flow.png)
 
 #### 🔁 API 요청 흐름 (프록시 + Redis 블랙리스트 검증)
 
-![리버스프록시](./리버스프록시.png)
+![리버스프록시](/image/auth_proxy_flow.png)
 
 #### 🚪 로그아웃 흐름 (Redis 블랙리스트 + Refresh 삭제)
 
-![로그아웃](./로그아웃.png)
+![로그아웃](/image/auth_logout_flow.png)
+
+#### 🔄 Ask API 전체 흐름
+
+> `/rag/ask` → 문서 검색 → LLM 응답 → JSON 반환
+
+![FastAPI](/image/rag_ask_flow.png)
 
 ---
 
@@ -114,4 +170,4 @@ POST /retrieve
 
 - **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)
 - **Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
-- **Collections**: `collections/rag-demo.json`
+- **Collections**: `rag_demo/app/app/scripts/namu_anime_v3.jsonl`
