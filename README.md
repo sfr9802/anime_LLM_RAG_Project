@@ -15,10 +15,10 @@
 - `/answer` : 검색 결과 기반 응답 생성  
 - `/debug/bench` : recall@k, dup_rate, p95(ms) 벤치마크
 
-**품질 지표(구현중)**:  
-- recall@5 **0.87**  
-- p95 **310ms**  
-- dup_rate **0.18**
+**품질 지표 2025-09-09 기준**:  
+- recall@5 **0.3**  
+- p95 **50ms**  
+- dup_rate **0.07**
 
 **데모**: Swagger 캡처 · Bruno/Postman 컬렉션(`collections/rag-demo.json`)  
 
