@@ -168,17 +168,17 @@ Content-Type: application/json
 - 💡 **MMR Re-ranking**: Semantic 다양성 보장, 중복 제거
 - ✂️ **Chunking Strategy**: 한국어 종결어미/제목 기반 청킹
 - 🧪 **Benchmark APIs**: recall@k, dup_rate, p95 등 측정 가능
-- 🔗 **Postman/Bruno Collections**: 테스트 자동화 지원
-- 🔁 **Embeddings**: SBERT, bge-m3, Instruct 등 비교 실험
+- 🔁 **Embeddings**: bge-m3 실험
 
 ---
 
 ## 🔭 Roadmap
 
-- [ ] bge-m3 → instruct 모델 전환 A/B 테스트
-- [ ] Chroma efSearch 최적곡선 정리
-- [ ] p95 줄이기 위한 캐시 전략 실험
-- [ ] 대시보드 시각화 페이지 연동
+- [ ] RAG 응답 품질 향상을 위한 파라미터 튜닝 고도화 (Optuna 기반)
+- [ ] Chroma 벡터 검색 Top-K 튜닝: `fetch_k`, `mmr_k`, `rerank_in` 최적화
+- [ ] 프론트엔드 대화형 UI 개선 (GPT 스타일 대화창 + 하이라이팅 처리)
+- [ ] 사용자 입력 기반 검색 로그 기록 + 분석 기능 추가
+- [ ] 검색 리콜/중복률/응답시간 지표 시각화 및 비교 리포트 정리
 
 ---
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 import os, json, time, argparse, csv, random, math, contextlib
 from pathlib import Path
@@ -41,7 +40,7 @@ def _split_csv(v) -> List[str]:
 
 def _gold_keys_for_meta(m: Dict, by: str) -> List[str]:
     """
-    B. GOLD 집합 확장: 해당 메타에 매칭되는 모든 청크 키를 수집한다.
+    GOLD 집합 확장: 해당 메타에 매칭되는 모든 청크 키를 수집한다.
     by ∈ {'title','seed','doc'} 에 따라 keys_from_docs의 기준을 맞춘다.
     """
     from app.app.infra.vector.chroma_store import get_collection
@@ -61,9 +60,7 @@ def _gold_keys_for_meta(m: Dict, by: str) -> List[str]:
 
     res = coll.get(where=where, include=["metadatas"], limit=6666)
     items = [{"metadata": md, "id": _id} for md, _id in zip(res.get("metadatas") or [], res.get("ids") or [])]
-    # 기준(by)에 맞춘 key 집합 생성
     keys = keys_from_docs(items, by=by if by in ("title","seed","doc") else "title")
-    # 중복 제거
     uniq, seen = [], set()
     for k in keys:
         if k in seen: continue
@@ -161,22 +158,42 @@ def patched_environ(env_patch: Dict[str, Any]):
             if v is None: os.environ.pop(k, None)
             else: os.environ[k] = v
 
+# ---- search-space lock helpers ----
+def _parse_choices(s: str, cast):
+    if not s: return None
+    xs = [z.strip() for z in s.split(",") if z.strip()]
+    return [cast(x) for x in xs]
+
+def _parse_range(s: str, cast=int):
+    if not s: return None
+    parts = [p.strip() for p in s.split(":") if p.strip()]
+    if len(parts) == 1:
+        a = cast(parts[0]); return [a]
+    if len(parts) == 2:
+        a, b = cast(parts[0]), cast(parts[1]); step = 1
+    else:
+        a, b, step = cast(parts[0]), cast(parts[1]), cast(parts[2])
+    if cast is float:
+        vals = []
+        x = a
+        while x <= b + 1e-12:
+            vals.append(float(x))
+            x += step
+        return vals
+    return list(range(a, b + 1, step))
+
 # ========== evaluation ==========
 def build_dev_rows(N: int, section: str, match_by: str, seed: int) -> List[Tuple[str, List[str]]]:
     """
-    B. GOLD 집합 확장 적용:
-    - 이전: gold = [단일 키]
-    - 변경: 해당 메타에 매칭되는 모든 청크를 조회하여 GOLD 집합 생성
+    GOLD 집합 확장 적용
     """
     random.seed(seed)
     metas = _sample_from_chroma(N, section_hint=section)
     dev_rows: List[Tuple[str, List[str]]] = []
     for m in metas:
-        # GOLD 키를 match_by 기준으로 확장해 수집
         gold = _gold_keys_for_meta(m, match_by)
         if not gold:
             continue
-        # 쿼리 후보 생성 & 샘플
         qs = _make_queries_from_meta(m)
         if not qs:
             continue
@@ -185,7 +202,6 @@ def build_dev_rows(N: int, section: str, match_by: str, seed: int) -> List[Tuple
     return dev_rows
 
 def evaluate_config(dev_rows, cfg: Dict[str, Any], envp: Dict[str, Any], svc: RagService) -> Dict[str, float]:
-    # svc는 프로세스당 1회 생성해 재사용(리랭커/임베더 재로딩 방지)
     with patched_environ(envp):
         hits, recs, mrrs, ndcgs, lats, dups = [], [], [], [], [], []
         rec50_raw_vals = []
@@ -236,7 +252,7 @@ def main():
     ap.add_argument("--study", default="retrieval_tune")
     ap.add_argument("--reranker", choices=["keep","on","off"], default="keep")
     ap.add_argument("--strategies", choices=["both","baseline","chroma_only"],
-                default="both", help="전략 공간 제한")
+                    default="both", help="전략 공간 제한")
     # 스코어 가중치
     ap.add_argument("--w_recall", type=float, default=0.6)
     ap.add_argument("--w_mrr", type=float, default=0.2)
@@ -247,7 +263,25 @@ def main():
     # 롤백 기준
     ap.add_argument("--improve-pct", type=float, default=0.01, help="점수 상대 개선율(예: 0.01=+1%)")
     ap.add_argument("--improve-recall", type=float, default=0.01, help="recall@k 절대 개선치")
-    
+
+    # ---- Search-space locks ----
+    ap.add_argument("--k-choices", type=str, default="",
+                    help="k 후보 (콤마 구분, 예: '8,9')")
+    ap.add_argument("--lam-choices", type=str, default="",
+                    help="λ 후보 (콤마 구분, 예: '0.7,0.8')")
+    ap.add_argument("--pre-k-range", type=str, default="",
+                    help="MMR_PRE_K 범위 'start:end:step' (예: '80:100:20')")
+    ap.add_argument("--mmr-k-range", type=str, default="",
+                    help="MMR_K 범위 'start:end:step' (예: '24:34:2')")
+    ap.add_argument("--rerank-in-range", type=str, default="",
+                    help="RERANK_IN 범위 'start:end:step' (예: '28:36:2')")
+    ap.add_argument("--fetch-k-range", type=str, default="",
+                    help="FETCH_K 범위 'start:end:step' (예: '120:140:20')")
+    ap.add_argument("--title-cap-choices", type=str, default="",
+                    help="TITLE_CAP 후보 (예: '1,2')")
+    ap.add_argument("--restrict-sweetspot", action="store_true",
+                    help="스윗스팟 제약: k∈{8,9}, λ∈[0.7,0.8], PRE_K≥80, RERANK_IN∈[24,36], FETCH_K≤140")
+
     args = ap.parse_args()
 
     outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
@@ -257,7 +291,6 @@ def main():
         os.environ["RAG_USE_RERANK"] = "1"
     elif args.reranker == "off":
         os.environ["RAG_USE_RERANK"] = "0"
-    # keep이면 그대로 둔다
 
     # RagService 1회 생성(전 트라이얼 공유)
     svc = RagService()
@@ -270,31 +303,68 @@ def main():
     def objective(trial: optuna.Trial) -> float:
         strat_space = ["baseline", "chroma_only"] if args.strategies == "both" else [args.strategies]
         strategy = trial.suggest_categorical("strategy", strat_space)
-        k = trial.suggest_int("k", 4, 12)
+
+        # k / λ 락
+        k_choices = _parse_choices(args.k_choices, int)
+        lam_choices = _parse_choices(args.lam_choices, float)
+        k = trial.suggest_categorical("k", k_choices) if k_choices else trial.suggest_int("k", 4, 12)
         use_mmr = trial.suggest_categorical("use_mmr", [True, False])
-        lam = trial.suggest_float("lam", 0.0, 0.8, step=0.1)
+        if lam_choices:
+            lam = trial.suggest_categorical("lam", lam_choices)
+        else:
+            lam = trial.suggest_float("lam", 0.0, 0.8, step=0.1)
+
         candidate_k = trial.suggest_int("candidate_k", 80, 320, step=20) if strategy == "baseline" else None
 
-        # C. 파라미터 관계 제약: MMR_K ≤ PRE_K ≤ FETCH_K
-        pre_k = trial.suggest_int("RAG_MMR_PRE_K", 60, 200, step=20)
-        mmr_k = trial.suggest_int("RAG_MMR_K", max(k*3, 24), pre_k, step=10)  # 상한=pre_k
-        fetch_k = trial.suggest_int("RAG_FETCH_K", max(pre_k, 80), 240, step=20)  # 하한=pre_k
-        # 보조 fetch는 기존 범위 유지(필요시 fetch_k로 상한 조정 가능)
-        fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", max(k*4, 40), 160, step=20)
-        rerank_in = trial.suggest_int("RAG_RERANK_IN", 12, 48, step=4)
+        # PRE_K / MMR_K / RERANK_IN / FETCH_K 락
+        prek_candidates   = _parse_range(args.pre_k_range, int)
+        mmrk_candidates   = _parse_range(args.mmr_k_range, int)
+        rerank_candidates = _parse_range(args.rerank_in_range, int)
+        fetchk_candidates = _parse_range(args.fetch_k_range, int)
 
-        # 방어적 assert (Optuna가 범위로 보장하지만, 런타임 보호)
+        pre_k = trial.suggest_categorical("RAG_MMR_PRE_K", prek_candidates) if prek_candidates \
+                else trial.suggest_int("RAG_MMR_PRE_K", 60, 200, step=20)
+
+        # 동적 choices 금지: 고정 분포에서 뽑고 조건 미충족이면 prune
+        if mmrk_candidates:
+            mmr_k = trial.suggest_categorical("RAG_MMR_K", mmrk_candidates)
+        else:
+            mmr_k = trial.suggest_int("RAG_MMR_K", 24, 200, step=2)
+        if mmr_k < max(k*3, 24) or mmr_k > pre_k:
+            raise optuna.TrialPruned()
+
+        if fetchk_candidates:
+            fetch_k = trial.suggest_categorical("RAG_FETCH_K", fetchk_candidates)
+        else:
+            fetch_k = trial.suggest_int("RAG_FETCH_K", 80, 240, step=20)
+        if fetch_k < max(pre_k, 80):
+            raise optuna.TrialPruned()
+
+        fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", max(k*4, 40), 160, step=20)
+
+        rerank_in = trial.suggest_categorical("RAG_RERANK_IN", rerank_candidates) if rerank_candidates \
+                    else trial.suggest_int("RAG_RERANK_IN", 12, 48, step=4)
+
         assert mmr_k <= pre_k <= fetch_k, f"Invalid chain: MMR_K({mmr_k}) ≤ PRE_K({pre_k}) ≤ FETCH_K({fetch_k}) violated"
 
-        # env 파라미터(네 서비스가 env 기반으로 읽음)
+        title_cap_choices = _parse_choices(args.title_cap_choices, int)
         envp = {
-            "RAG_TITLE_CAP": trial.suggest_int("RAG_TITLE_CAP", 1, 3),
+            "RAG_TITLE_CAP": trial.suggest_categorical("RAG_TITLE_CAP", title_cap_choices) if title_cap_choices
+                             else trial.suggest_int("RAG_TITLE_CAP", 1, 3),
             "RAG_MMR_PRE_K": pre_k,
             "RAG_MMR_K":     mmr_k,
             "RAG_RERANK_IN": rerank_in,
             "RAG_FETCH_K":   fetch_k,
             "RAG_FETCH_K_AUX": fetch_k_aux,
         }
+
+        # 스윗스팟 제약(옵션)
+        if args.restrict_sweetspot:
+            if k not in (8, 9): raise optuna.TrialPruned()
+            if lam < 0.7 or lam > 0.8: raise optuna.TrialPruned()
+            if pre_k < 80: raise optuna.TrialPruned()
+            if rerank_in < 24 or rerank_in > 36: raise optuna.TrialPruned()
+            if fetch_k > 140: raise optuna.TrialPruned()
 
         cfg = dict(strategy=strategy, k=k, use_mmr=use_mmr, lam=lam,
                    candidate_k=candidate_k, match_by=args.by)
@@ -378,7 +448,7 @@ def main():
 
     print("[BEST]")
     print(json.dumps(out, ensure_ascii=False, indent=2))
-    print(f"\\nSaved CSV: {csv_path.resolve()}\\nSaved BEST: {best_path.resolve()}")
+    print(f"\nSaved CSV: {csv_path.resolve()}\nSaved BEST: {best_path.resolve()}")
 
 if __name__ == "__main__":
     main()
