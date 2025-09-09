@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from app.app.services.rag_service import RagService
+from app.app.services.rag import RagService
 from app.app.domain.models.query_model import QueryRequest, RAGQueryResponse  # ← 네 모델 사용
 
 router = APIRouter(prefix="/rag", tags=["rag"])

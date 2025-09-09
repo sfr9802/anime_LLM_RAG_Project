@@ -6,7 +6,7 @@ import numpy as np
 import sys as _sys
 # 너의 프로젝트에서 쓰일 수 있는 모든 경로 별칭을 통일
 for _alias in (
-    "app.app.domain.embeddings",  # rag_service가 쓰는 경로
+    "app.app.domain.embeddings",  # RagService가 쓰는 경로
     "app.domain.embeddings",
 ):
     if _alias != __name__:

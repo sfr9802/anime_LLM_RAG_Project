@@ -4,7 +4,7 @@ import os, json, time, argparse, csv, itertools, random, math, contextlib
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
-from app.app.services.rag_service import RagService
+from app.app.services.rag import RagService
 from app.app.metrics.quality import (
     keys_from_docs, hit_at_k, recall_at_k, dup_rate, p_percentile
 )
