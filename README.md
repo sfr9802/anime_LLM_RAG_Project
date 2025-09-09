@@ -23,8 +23,8 @@ From data crawling to vector DB tuning, LLM prompting, and secure API design.
 
 - `/ingest`: 문서 업서트 (Mongo + Chroma)
 - `/retrieve`: 임베딩 검색 + (선택) MMR
-- `/answer`: 검색 기반 LLM 응답 생성
-- `/debug/bench`: 품질 벤치마크용 API (recall, dup_rate, p95)
+- `/ask`: 검색 기반 LLM 응답 생성
+
 
 📈 **현재 품질 지표** (2025-09-09 기준):
 - recall@5: `0.30`
@@ -48,7 +48,7 @@ POST /retrieve
 
 > 나무위키 기반 대규모 문서 수집 및 전처리 → RAG 최적화 JSONL 생성.
 
-- 크롤링 대상: 애니메이션 관련 문서 7,700건 (2006~2025), title 1,764건
+- 크롤링 대상: 애니메이션 관련 문서 7,700건 (2006~2025)
 - 주요 처리:
   - 등장인물/설정 등 하위 링크 재귀 수집
   - 라이선스/푸터/광고 제거
@@ -100,28 +100,44 @@ You can interact via `/rag/*`, `/debug/*`, and `/admin/ingest/*` routes.
 │       └── admin_ingest_router.py ← /admin/ingest/*
 ```
 
-### 🔍 Sample: `/rag/ask`
+### 🔍 `/rag/ask` 요청/응답 예시
 
+`/rag/ask` 엔드포인트는 본문(JSON)으로 **질문**을 받고, 선택적인 **하이퍼파라미터**는 쿼리 스트링을 통해 전달받습니다.  
+아래는 기본값을 포함한 요청 예시입니다:
+
+#### ✅ 요청 예시
 ```http
-POST /rag/ask?k=6&use_mmr=true&lam=0.5&max_tokens=512&temperature=0.2
+POST /rag/ask?k=6&use_mmr=true&lam=0.5&max_tokens=512&temperature=0.2&preview_chars=600 HTTP/1.1
 Authorization: Bearer ACCESS
+Content-Type: application/json
 
 {
   "question": "신이 된 히로인의 서사가 있는 애니메이션은?"
 }
 ```
 
-Response:
+#### ✅ 응답 예시 (`RAGQueryResponse`)
 ```json
 {
   "question": "신이 된 히로인의 서사가 있는 애니메이션은?",
   "answer": "스즈미야 하루히의 우울",
   "documents": [
-    { "title": "스즈미야 하루히의 우울", "score": 0.83, ... },
+    {
+      "id": "doc1#0",
+      "title": "스즈미야 하루히의 우울",
+      "score": 0.83,
+      "text": "..."
+    },
     ...
   ]
 }
 ```
+
+- `question`: 사용자로부터 입력받은 질문 원문
+- `answer`: 검색된 문서를 기반으로 LLM이 생성한 응답
+- `documents`: 검색 결과로 사용된 top-k 문서 목록 (`title`, `score`, `text` 등 포함)
+
+> 🔒 요청 시 `Authorization: Bearer <token>` 헤더를 포함해야 하며, 미들웨어에서 JWT 유효성 검사를 수행합니다.
 
 ---
 
@@ -170,4 +186,4 @@ Response:
 
 - **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)
 - **Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
-- **Collections**: `rag_demo/app/app/scripts/namu_anime_v3.jsonl`
+- **Collections**: `collections/rag-demo.json`
