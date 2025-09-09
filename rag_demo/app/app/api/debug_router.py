@@ -7,7 +7,7 @@ import os
 
 from ..services.retrieval_service import retrieve as svc_retrieve
 from ..services.eval_service import evaluate_hit as svc_evaluate_hit
-from ..services.rag_service import RagService
+from ..services.rag import RagService
 from ..infra.llm.provider import get_chat
 from ..configure import config
 
