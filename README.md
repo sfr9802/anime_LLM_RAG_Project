@@ -1,29 +1,45 @@
-# 🗂️ Backend Portfolio — RAG · Data Pipeline · Security
 
-**전문 분야**: 도메인 특화 RAG 백엔드 & 데이터 파이프라인  
-**주요 스택**: FastAPI · Python · Chroma(HNSW) · MongoDB · Spring Security(OAuth2/JWT)  
+# 🧠 Anime RAG Stack — Full Pipeline Portfolio
+
+Domain-specialized **Retrieval-Augmented Generation (RAG)** backend for anime documents.  
+From data crawling to vector DB tuning, LLM prompting, and secure API design.
+
+## 🏗️ Architecture Overview
+
+```
+[ React ] ⇄ [ Spring Security Middleware (OAuth2 + JWT + Redis) ] ⇄ [ FastAPI Core (Mongo + Chroma) ] ⇄ [ LLM (Gemma-2-9b-it) ]
+```
+
+- End-to-end flow: Query → Embedding → Retrieval → MMR → Rerank → Prompt → LLM Response  
+- Built with **Docker Compose** for local development, GPU inference, and modular orchestration.
 
 ---
 
-## 📌 Top Projects
+## 🔍 Core Projects
 
-### 1) RAG Backend (2025)
-**역할**: 아키텍처 설계 · 임베딩/인덱싱/검색 통합 · 디버그/벤치 하네스 구축  
-**핵심 기능**:  
-- `/ingest` : 문서·메타데이터 업서트  
-- `/retrieve` : 쿼리 → top-k 검색 + (선택) MMR 재랭킹  
-- `/answer` : 검색 결과 기반 응답 생성  
-- `/debug/bench` : recall@k, dup_rate, p95(ms) 벤치마크
+### 1. RAG Backend API (2025)
 
+<<<<<<< Updated upstream
 **품질 지표 2025-09-09 기준**:  
 - recall@5 **0.3**  
 - p95 **50ms**  
 - dup_rate **0.07**
+=======
+> FastAPI 기반 모듈화된 RAG 백엔드. 검색/재랭킹/응답 생성을 모두 지원.
+>>>>>>> Stashed changes
 
-**데모**: Swagger 캡처 · Bruno/Postman 컬렉션(`collections/rag-demo.json`)  
+- `/ingest`: 문서 업서트 (Mongo + Chroma)
+- `/retrieve`: 임베딩 검색 + (선택) MMR
+- `/answer`: 검색 기반 LLM 응답 생성
+- `/debug/bench`: 품질 벤치마크용 API (recall, dup_rate, p95)
 
-**API 예시(구현중)**:
-```http
+📈 **현재 품질 지표** (2025-09-09 기준):
+- recall@5: `0.30`
+- dup_rate: `0.07`
+- p95 latency: `50ms`
+
+🧪 예시 요청:
+```json
 POST /retrieve
 {
   "query": "작품 A 등장인물",
@@ -31,67 +47,71 @@ POST /retrieve
   "use_mmr": true,
   "lambda_": 0.3
 }
-
-200 OK
-{
-  "data": {
-    "hits": [
-      {"id": "doc_123", "score": 0.84},
-      ...
-    ]
-  },
-  "meta": { "k": 5, "mmr": true, "lambda": 0.3 },
-  "error": null
-}
 ```
 
 ---
 
-### 2) NamuWiki Crawler & Cleaning (2025)
-**역할**: 대규모 재귀 크롤링 설계 · 데이터 정제 및 노이즈 제거 · 스토리지 설계  
-**기술**: Selenium · BeautifulSoup · 정규식 · 멀티프로세싱  
-**규모**: 문서 **~7,700**개 수집, JSONL 포맷으로 정제 후 Mongo/MySQL 저장  
-**결과물**: HuggingFace 업로드 가능한 RAG용 데이터셋  
-**특징**:  
-- 등장인물/설정 등 하위 링크 재귀 수집  
-- 라이선스·푸터·광고 제거 규칙 적용  
-- 청킹(Chunking) 사전 처리
+### 2. NamuWiki Crawler & Cleaner
+
+> 나무위키 기반 대규모 문서 수집 및 전처리 → RAG 최적화 JSONL 생성.
+
+- 크롤링 대상: 애니메이션 관련 문서 7,700건 (2006~2025)
+- 주요 처리:
+  - 등장인물/설정 등 하위 링크 재귀 수집
+  - 라이선스/푸터/광고 제거
+  - 섹션/문단 기반 청킹, avg chunk ≈ 350 tokens
+- 결과:
+  - Hugging Face 데이터셋 공개  
+    → [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
 
 ---
 
-### 3) Spring Security / OAuth2 JWT Middleware
-**역할**: 인증·인가 미들웨어 설계 및 구현  
-**기능**:  
-- OAuth2 팝업 로그인 (Google) → JWT 발급/저장  
-- Redis 기반 Refresh Token 및 블랙리스트 로그아웃  
-- JWT 인증 필터와 SecurityContext 관리 분리  
-**성과**: REST API용 Stateless 인증 환경 구축  
-**프론트 연계**: React 기반 토큰 처리 및 axios 헤더 자동화
+### 3. Spring Security Middleware
+
+> React ⇄ FastAPI 사이 인증 및 프록시 담당 Spring 모듈
+
+- OAuth2 팝업 로그인 → JWT 발급
+- Redis 기반 Refresh Token + 블랙리스트 로그아웃
+- `@AuthenticationPrincipal` 타입 분리 처리 (OAuth2 vs JWT)
+- React에서 받은 토큰을 Axios global header에 설정
+
+🖼️ 시퀀스 다이어그램
+
+#### 🔐 로그인 흐름 (OAuth2 → JWT → OTC 발급)
+
+![로그인](./로그인.png)
+
+#### 🔁 API 요청 흐름 (프록시 + Redis 블랙리스트 검증)
+
+![리버스프록시](./리버스프록시.png)
+
+#### 🚪 로그아웃 흐름 (Redis 블랙리스트 + Refresh 삭제)
+
+![로그아웃](./로그아웃.png)
 
 ---
 
-## 🛠️ Bench & Debug
-_아직 구현 전_
+## ⚙️ Tech Highlights
+
+- 💡 **MMR Re-ranking**: Semantic 다양성 보장, 중복 제거
+- ✂️ **Chunking Strategy**: 한국어 종결어미/제목 기반 청킹
+- 🧪 **Benchmark APIs**: recall@k, dup_rate, p95 등 측정 가능
+- 🔗 **Postman/Bruno Collections**: 테스트 자동화 지원
+- 🔁 **Embeddings**: SBERT, bge-m3, Instruct 등 비교 실험
 
 ---
 
-## 🚀 Tech Highlights
-- **MMR 재랭킹**: 다양성 향상, 중복률 감소  
-- **한국어 청킹 규칙**: 종결어미·제목 경계 보정, avg_len≈350  
-- **운영 편의성**: Swagger 활성화, Bruno/Postman 컬렉션 제공  
-- **데이터 파이프라인**: 수집 → 정제 → 벡터화 → 검색까지 일관된 흐름
+## 🔭 Roadmap
 
----
-
-## 📅 Roadmap
-- [ ] 임베딩 모델 교체(bge-m3 → instruct) A/B 테스트  
-- [ ] efSearch 튜닝 곡선 정리  
-- [ ] 캐싱/프리히트로 p95 절감 실험  
-- [ ] RAG 품질 지표 시각화 페이지 추가
+- [ ] bge-m3 → instruct 모델 전환 A/B 테스트
+- [ ] Chroma efSearch 최적곡선 정리
+- [ ] p95 줄이기 위한 캐시 전략 실험
+- [ ] 대시보드 시각화 페이지 연동
 
 ---
 
 ## 📎 Links
-- **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)  
-- **HuggingFace Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)  
-- **Bruno/Postman Collection**: `collections/rag-demo.json`
+
+- **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)
+- **Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
+- **Collections**: `collections/rag-demo.json`

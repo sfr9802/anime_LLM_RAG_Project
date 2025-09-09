@@ -17,7 +17,7 @@ from app.app.infra.vector.chroma_store import search as chroma_search
 def _norm(s: str) -> str:
     import unicodedata, re
     s = unicodedata.normalize("NFKC", s or "").lower()
-    return re.sub(r"[\\s\\W_]+", "", s)
+    return re.sub(r"[\s\W_]+", "", s)
 
 def _mrr(retrieved: List[str], gold: List[str]) -> float:
     G = {_norm(t) for t in gold if t}

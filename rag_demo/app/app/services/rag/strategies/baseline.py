@@ -85,9 +85,13 @@ class BaselineStrategy(RetrievalStrategy):
 
         rerank_in = min(max(rerank_in_lst), len(merged))
         if service._reranker and rerank_in > 0:
-            return self._rerank(service, q, merged[:rerank_in], k)
-        else:
-            return merged[:k]
+            reranked = self._rerank(service, q, merged[:rerank_in], k)
+            if len(reranked) < k:
+                # 남은 슬롯은 미-재정렬 구간에서 순서대로 보충
+                tail = [it for it in merged[rerank_in:] if it not in reranked]
+                reranked.extend(tail[: k - len(reranked)])
+            return reranked[:k]
+        return merged[:k]
 
 
 __all__ = ["BaselineStrategy"]
