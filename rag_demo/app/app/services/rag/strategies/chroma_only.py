@@ -14,9 +14,13 @@ from .base import RetrievalStrategy
 
 try:
     # 선택: BM25 스파스 검색기 (없으면 None)
-    from app.app.domain.bm25 import bm25_search  # (query, n, where) -> flatten_chroma_like list
+    from app.app.infra.sparse.bm25 import bm25_search  # (query, n, where) -> flatten_chroma_like list
 except Exception:
     bm25_search = None
+
+
+def _rrf_id(it: Dict[str, Any]) -> str:
+    return it.get("id") or f"{it.get('title','')}|{it.get('section','')}|{it.get('offset','')}"
 
 
 def _rrf_merge_weighted(lists: List[List[Dict[str, Any]]], weights: Optional[List[float]] = None, K: int = 60) -> List[Dict[str, Any]]:
@@ -32,12 +36,11 @@ def _rrf_merge_weighted(lists: List[List[Dict[str, Any]]], weights: Optional[Lis
     for li, items in enumerate(lists):
         w = float(weights[li] if li < len(weights) else 1.0)
         for r, it in enumerate(items, start=1):
-            _id = it.get("id") or f"{it.get('title','')}|{it.get('section','')}|{it.get('offset','')}"
-            score_map[_id] = score_map.get(_id, 0.0) + (w / (K + r))
-            if _id not in pick:
-                pick[_id] = it
-    merged = sorted(pick.values(), key=lambda it: score_map[it.get("id") or ""], reverse=True)
-    return merged
+            rid = _rrf_id(it)
+            score_map[rid] = score_map.get(rid, 0.0) + (w / (K + r))
+            if rid not in pick:
+                pick[rid] = it
+    return sorted(pick.values(), key=lambda it: score_map[_rrf_id(it)], reverse=True)
 
 
 class ChromaOnlyStrategy(RetrievalStrategy):
@@ -52,12 +55,21 @@ class ChromaOnlyStrategy(RetrievalStrategy):
         use_mmr: bool,
         lam: float,
     ) -> List[Dict[str, Any]]:
-        qvars = _expand_queries(q)
+        qvars_all = _expand_queries(q)
 
         # 프로파일 기반 기본값 (env가 있으면 env 우선)
         profile = (os.getenv("RAG_PROFILE") or "").lower()  # "quality" | "balanced"
         base_n = _env_int("RAG_FETCH_K", 120)
         aux_n  = _env_int("RAG_FETCH_K_AUX", 60)
+
+        # 확장 상한 및 감쇠
+        max_exp = int(os.getenv("RAG_MAX_EXPANSIONS", "2"))
+        aux_decay = float(os.getenv("RAG_AUX_DECAY", "0.75"))
+        qvars = []
+        for i, qq in enumerate(qvars_all):
+            if qq == q: continue
+            if i >= max_exp: break
+            qvars.append((qq, max(16, int(aux_n * (aux_decay ** i)))))
 
         lists: List[List[Dict[str, Any]]] = []
         resA = chroma_search(
@@ -72,12 +84,10 @@ class ChromaOnlyStrategy(RetrievalStrategy):
         service._last_space = (resA.get("space") or "cosine").lower()
         lists.append(flatten_chroma_result(resA))
 
-        for qq in qvars:
-            if qq == q:
-                continue
+        for qq, n_i in qvars:
             res = chroma_search(
                 query=qq,
-                n=aux_n,
+                n=n_i,
                 where=where,
                 include_docs=True,
                 include_metas=True,
@@ -89,19 +99,39 @@ class ChromaOnlyStrategy(RetrievalStrategy):
         # ----- Optional Hybrid (BM25) -----
         hybrid_on = (os.getenv("HYBRID_USE", "false").lower() in ("1", "true", "yes")) and (bm25_search is not None)
         alpha = float(os.getenv("HYBRID_ALPHA", "0.25"))  # 0.2~0.3 권장
+
+        def _is_sentence_like(s: str) -> bool:
+            return len((s or "").split()) >= 6 or any(ch in (s or "") for ch in ".?!")
+
         if hybrid_on:
             try:
-                bm = bm25_search(q, n=base_n, where=where)  # flatten_chroma_result 형태를 맞추는 걸 권장
-                # 가중 RRF 병합: [chroma main, expansions..., bm25]
-                weights = [1.0] * len(lists) + [alpha]
-                items = _rrf_merge_weighted(lists + [bm], weights=weights, K=60)
+                # 문장형 질의면 하이브리드 가중치 축소
+                cooldown = float(os.getenv("HYBRID_ALPHA_SENT_COOLDOWN", "0.6"))
+                a = alpha * (cooldown if _is_sentence_like(q) else 1.0)
+                bm = bm25_search(q, n=base_n, where=where)  # flatten_chroma_result 형태를 맞추는걸 권장
+                rrf_K = int(os.getenv("RAG_RRF_K", "60"))
+                weights = [1.0] * len(lists) + [a]
+                items = _rrf_merge_weighted(lists + [bm], weights=weights, K=rrf_K)
             except Exception:
-                # 안전장치: 실패 시 chroma-only로 진행
-                items = _rrf_merge(lists, K=60)
+                items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
         else:
-            items = _rrf_merge(lists, K=60)
+            items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
 
         base = self._dedup_and_score(service, items)
+
+        # 섹션/문단 캡 (선택)
+        sec_cap = int(os.getenv("RAG_SECTION_CAP", "0"))
+        if sec_cap > 0:
+            def _cap_by_section(items: List[Dict[str, Any]], cap: int = 1) -> List[Dict[str, Any]]:
+                count, out = {}, []
+                for it in items:
+                    md = it.get("metadata", {})
+                    key = (md.get("title") or it.get("title", ""), md.get("section") or it.get("section", ""))
+                    c = count.get(key, 0)
+                    if c < cap:
+                        out.append(it); count[key] = c + 1
+                return out
+            base = _cap_by_section(base, cap=sec_cap)
 
         # 프로파일 디폴트
         if profile == "quality":
@@ -151,14 +181,15 @@ class ChromaOnlyStrategy(RetrievalStrategy):
                         pools.append(_mmr(q, pre, k=mmrk, lam=lam))
                         tried += 1
 
-        merged = _rrf_merge(pools, K=60) if len(pools) > 1 else (pools[0] if pools else [])
+        merged = _rrf_merge(pools, K=int(os.getenv("RAG_RRF_K", "60"))) if len(pools) > 1 else (pools[0] if pools else [])
         merged = self._dedup_and_score(service, merged)
 
         rerank_in = min(max(rerank_in_lst), len(merged))
         if service._reranker and rerank_in > 0:
             reranked = self._rerank(service, q, merged[:rerank_in], k)
             if len(reranked) < k:
-                tail = [it for it in merged[rerank_in:] if it not in reranked]
+                chosen = { _rrf_id(it) for it in reranked }
+                tail = [it for it in merged[rerank_in:] if _rrf_id(it) not in chosen]
                 reranked.extend(tail[: k - len(reranked)])
             return reranked[:k]
         return merged[:k]

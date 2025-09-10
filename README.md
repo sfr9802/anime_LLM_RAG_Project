@@ -27,7 +27,7 @@ From data crawling to vector DB tuning, LLM prompting, and secure API design.
 
 
 📈 **현재 품질 지표** (2025-09-09 기준):
-- recall@5: `0.30`
+- recall@5: `0.56`
 - dup_rate: `0.07`
 - p95 latency: `50ms`
 

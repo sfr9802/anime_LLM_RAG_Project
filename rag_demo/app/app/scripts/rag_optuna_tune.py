@@ -1,7 +1,28 @@
 from __future__ import annotations
-import os, json, time, argparse, csv, random, math, contextlib
+import os, sys, json, time, argparse, csv, random, math, contextlib
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
+
+# ==== .env MUST LOAD BEFORE ANY app.* IMPORTS ====
+from dotenv import load_dotenv, find_dotenv
+
+# --env-file / --no-dotenv 를 argparse 이전에 선파싱해서 "가장 먼저" 로드
+ENV_FILE = None
+NO_DOTENV = False
+argv = sys.argv[1:]
+for i, a in enumerate(argv):
+    if a == "--env-file" and i + 1 < len(argv):
+        ENV_FILE = argv[i + 1]
+    elif a == "--no-dotenv":
+        NO_DOTENV = True
+
+if not NO_DOTENV:
+    if ENV_FILE and os.path.exists(ENV_FILE):
+        load_dotenv(ENV_FILE, override=False)  # 셸에 이미 있는 값은 유지
+    else:
+        # 현재 작업경로 기준으로 .env / .env.local 탐색
+        load_dotenv(find_dotenv(filename=".env", usecwd=True), override=False)
+        load_dotenv(find_dotenv(filename=".env.local", usecwd=True), override=False)
 
 import optuna  # pip install optuna
 
@@ -277,10 +298,15 @@ def main():
                     help="RERANK_IN 범위 'start:end:step' (예: '28:36:2')")
     ap.add_argument("--fetch-k-range", type=str, default="",
                     help="FETCH_K 범위 'start:end:step' (예: '120:140:20')")
+    ap.add_argument("--fetch-k-aux-range", type=str, default="",
+                    help="FETCH_K_AUX 범위 'start:end:step' (예: '60:60:20')")
     ap.add_argument("--title-cap-choices", type=str, default="",
                     help="TITLE_CAP 후보 (예: '1,2')")
     ap.add_argument("--restrict-sweetspot", action="store_true",
                     help="스윗스팟 제약: k∈{8,9}, λ∈[0.7,0.8], PRE_K≥80, RERANK_IN∈[24,36], FETCH_K≤140")
+    ap.add_argument("--force-mmr-on", action="store_true", help="MMR 강제 ON")
+    ap.add_argument("--env-file", default=ENV_FILE or "", help="Path to .env (loaded before imports)")
+    ap.add_argument("--no-dotenv", action="store_true", default=NO_DOTENV, help="Disable .env loading")
 
     args = ap.parse_args()
 
@@ -304,59 +330,74 @@ def main():
         strat_space = ["baseline", "chroma_only"] if args.strategies == "both" else [args.strategies]
         strategy = trial.suggest_categorical("strategy", strat_space)
 
-        # k / λ 락
+        # k / λ 락 (입력이 있으면 카테고리, 없으면 연속/정수)
         k_choices = _parse_choices(args.k_choices, int)
         lam_choices = _parse_choices(args.lam_choices, float)
         k = trial.suggest_categorical("k", k_choices) if k_choices else trial.suggest_int("k", 4, 12)
-        use_mmr = trial.suggest_categorical("use_mmr", [True, False])
-        if lam_choices:
-            lam = trial.suggest_categorical("lam", lam_choices)
+        if args.force_mmr_on:
+            use_mmr = True
         else:
-            lam = trial.suggest_float("lam", 0.0, 0.8, step=0.1)
+            use_mmr = trial.suggest_categorical("use_mmr", [True, False])
+        lam = trial.suggest_categorical("lam", lam_choices) if lam_choices else trial.suggest_float("lam", 0.0, 0.8, step=0.1)
 
         candidate_k = trial.suggest_int("candidate_k", 80, 320, step=20) if strategy == "baseline" else None
 
-        # PRE_K / MMR_K / RERANK_IN / FETCH_K 락
-        prek_candidates   = _parse_range(args.pre_k_range, int)
-        mmrk_candidates   = _parse_range(args.mmr_k_range, int)
-        rerank_candidates = _parse_range(args.rerank_in_range, int)
-        fetchk_candidates = _parse_range(args.fetch_k_range, int)
-
-        pre_k = trial.suggest_categorical("RAG_MMR_PRE_K", prek_candidates) if prek_candidates \
-                else trial.suggest_int("RAG_MMR_PRE_K", 60, 200, step=20)
-
-        # 동적 choices 금지: 고정 분포에서 뽑고 조건 미충족이면 prune
-        if mmrk_candidates:
-            mmr_k = trial.suggest_categorical("RAG_MMR_K", mmrk_candidates)
+        # 고정 분포로 샘플 후 '제약 위반은 Prune' 패턴 (Optuna 동적 분포 오류 회피)
+        # PRE_K
+        prek_candidates = _parse_range(args.pre_k_range, int)
+        if prek_candidates:
+            pre_k = trial.suggest_int("RAG_MMR_PRE_K", min(prek_candidates), max(prek_candidates), step=1)
+            if pre_k not in set(prek_candidates):
+                raise optuna.TrialPruned()
         else:
-            mmr_k = trial.suggest_int("RAG_MMR_K", 24, 200, step=2)
+            pre_k = trial.suggest_int("RAG_MMR_PRE_K", 60, 200, step=1)
+
+        # MMR_K
+        mmrk_candidates = _parse_range(args.mmr_k_range, int)
+        if mmrk_candidates:
+            mmr_k = trial.suggest_int("RAG_MMR_K", min(mmrk_candidates), max(mmrk_candidates), step=1)
+            if mmr_k not in set(mmrk_candidates):
+                raise optuna.TrialPruned()
+        else:
+            mmr_k = trial.suggest_int("RAG_MMR_K", 24, 200, step=1)
         if mmr_k < max(k*3, 24) or mmr_k > pre_k:
             raise optuna.TrialPruned()
 
+        # FETCH_K
+        fetchk_candidates = _parse_range(args.fetch_k_range, int)
         if fetchk_candidates:
-            fetch_k = trial.suggest_categorical("RAG_FETCH_K", fetchk_candidates)
+            fetch_k = trial.suggest_int("RAG_FETCH_K", min(fetchk_candidates), max(fetchk_candidates), step=1)
+            if fetch_k not in set(fetchk_candidates):
+                raise optuna.TrialPruned()
         else:
-            fetch_k = trial.suggest_int("RAG_FETCH_K", 80, 240, step=20)
+            fetch_k = trial.suggest_int("RAG_FETCH_K", 80, 240, step=1)
         if fetch_k < max(pre_k, 80):
             raise optuna.TrialPruned()
 
-        fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", max(k*4, 40), 160, step=20)
+        # FETCH_K_AUX
+        fetchk_aux_candidates = _parse_range(args.fetch_k_aux_range, int)
+        if fetchk_aux_candidates:
+            fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", min(fetchk_aux_candidates), max(fetchk_aux_candidates), step=1)
+            if fetch_k_aux not in set(fetchk_aux_candidates):
+                raise optuna.TrialPruned()
+        else:
+            fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", max(k*4, 40), 160, step=1)
 
-        rerank_in = trial.suggest_categorical("RAG_RERANK_IN", rerank_candidates) if rerank_candidates \
-                    else trial.suggest_int("RAG_RERANK_IN", 12, 48, step=4)
+        # RERANK_IN
+        rerank_candidates = _parse_range(args.rerank_in_range, int)
+        if rerank_candidates:
+            rerank_in = trial.suggest_int("RAG_RERANK_IN", min(rerank_candidates), max(rerank_candidates), step=1)
+            if rerank_in not in set(rerank_candidates):
+                raise optuna.TrialPruned()
+        else:
+            rerank_in = trial.suggest_int("RAG_RERANK_IN", 12, 48, step=1)
 
-        assert mmr_k <= pre_k <= fetch_k, f"Invalid chain: MMR_K({mmr_k}) ≤ PRE_K({pre_k}) ≤ FETCH_K({fetch_k}) violated"
-
+        # 제목 캡
         title_cap_choices = _parse_choices(args.title_cap_choices, int)
-        envp = {
-            "RAG_TITLE_CAP": trial.suggest_categorical("RAG_TITLE_CAP", title_cap_choices) if title_cap_choices
-                             else trial.suggest_int("RAG_TITLE_CAP", 1, 3),
-            "RAG_MMR_PRE_K": pre_k,
-            "RAG_MMR_K":     mmr_k,
-            "RAG_RERANK_IN": rerank_in,
-            "RAG_FETCH_K":   fetch_k,
-            "RAG_FETCH_K_AUX": fetch_k_aux,
-        }
+        if title_cap_choices:
+            title_cap = trial.suggest_categorical("RAG_TITLE_CAP", title_cap_choices)
+        else:
+            title_cap = trial.suggest_int("RAG_TITLE_CAP", 1, 3)
 
         # 스윗스팟 제약(옵션)
         if args.restrict_sweetspot:
@@ -365,6 +406,15 @@ def main():
             if pre_k < 80: raise optuna.TrialPruned()
             if rerank_in < 24 or rerank_in > 36: raise optuna.TrialPruned()
             if fetch_k > 140: raise optuna.TrialPruned()
+
+        envp = {
+            "RAG_TITLE_CAP": title_cap,
+            "RAG_MMR_PRE_K": pre_k,
+            "RAG_MMR_K":     mmr_k,
+            "RAG_RERANK_IN": rerank_in,
+            "RAG_FETCH_K":   fetch_k,
+            "RAG_FETCH_K_AUX": fetch_k_aux,
+        }
 
         cfg = dict(strategy=strategy, k=k, use_mmr=use_mmr, lam=lam,
                    candidate_k=candidate_k, match_by=args.by)

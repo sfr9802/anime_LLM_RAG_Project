@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     from rank_bm25 import BM25Okapi
-except Exception as e:
+except Exception:
     BM25Okapi = None
 
 _TOKENIZED_CORPUS: List[List[str]] = []
@@ -49,7 +49,5 @@ def bm25_search(query: str, n: int = 120, where: Optional[Dict[str, Any]] = None
             "title": meta.get("title", ""),
             "section": meta.get("section", ""),
             "metadata": meta,
-            # distance는 없으므로 생략; RRF는 rank 기반이라 문제 없음
         })
     return out
-

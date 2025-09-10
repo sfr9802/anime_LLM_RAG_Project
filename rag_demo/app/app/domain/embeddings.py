@@ -46,8 +46,8 @@ def _get(name: str, default: Any) -> Any:
     return default
 
 # 백엔드: fake | sbert | e5 | bge-m3 | openai
-EMBED_BACKEND: Literal["fake","sbert","e5","bge-m3","openai"] = str(_get("EMBED_BACKEND", "sbert")).lower()
-EMBED_MODEL: str = _get("EMBED_MODEL", "intfloat/multilingual-e5-base")
+EMBED_BACKEND: Literal["fake","sbert","e5","bge-m3","openai"] = str(_get("EMBED_BACKEND", "bge-m3")).lower()
+EMBED_MODEL: str = _get("EMBED_MODEL", "BAAI/bge-m3")
 EMBED_DIM: int = int(_get("EMBED_DIM", 0))            # 0이면 모델에서 추론/지정
 EMBED_BATCH: int = int(_get("EMBED_BATCH", 128))
 EMBED_DEVICE: str = _get("EMBED_DEVICE", "cuda")      # "auto" | "cuda" | "cpu"
