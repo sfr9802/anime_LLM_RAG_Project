@@ -344,53 +344,41 @@ def main():
 
         # 고정 분포로 샘플 후 '제약 위반은 Prune' 패턴 (Optuna 동적 분포 오류 회피)
         # PRE_K
+        # PRE_K
         prek_candidates = _parse_range(args.pre_k_range, int)
         if prek_candidates:
-            pre_k = trial.suggest_int("RAG_MMR_PRE_K", min(prek_candidates), max(prek_candidates), step=1)
-            if pre_k not in set(prek_candidates):
-                raise optuna.TrialPruned()
+            pre_k = trial.suggest_categorical("RAG_MMR_PRE_K", prek_candidates)
         else:
             pre_k = trial.suggest_int("RAG_MMR_PRE_K", 60, 200, step=1)
 
         # MMR_K
         mmrk_candidates = _parse_range(args.mmr_k_range, int)
         if mmrk_candidates:
-            mmr_k = trial.suggest_int("RAG_MMR_K", min(mmrk_candidates), max(mmrk_candidates), step=1)
-            if mmr_k not in set(mmrk_candidates):
-                raise optuna.TrialPruned()
+            mmr_k = trial.suggest_categorical("RAG_MMR_K", mmrk_candidates)
         else:
             mmr_k = trial.suggest_int("RAG_MMR_K", 24, 200, step=1)
-        if mmr_k < max(k*3, 24) or mmr_k > pre_k:
-            raise optuna.TrialPruned()
 
         # FETCH_K
         fetchk_candidates = _parse_range(args.fetch_k_range, int)
         if fetchk_candidates:
-            fetch_k = trial.suggest_int("RAG_FETCH_K", min(fetchk_candidates), max(fetchk_candidates), step=1)
-            if fetch_k not in set(fetchk_candidates):
-                raise optuna.TrialPruned()
+            fetch_k = trial.suggest_categorical("RAG_FETCH_K", fetchk_candidates)
         else:
             fetch_k = trial.suggest_int("RAG_FETCH_K", 80, 240, step=1)
-        if fetch_k < max(pre_k, 80):
-            raise optuna.TrialPruned()
 
         # FETCH_K_AUX
         fetchk_aux_candidates = _parse_range(args.fetch_k_aux_range, int)
         if fetchk_aux_candidates:
-            fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", min(fetchk_aux_candidates), max(fetchk_aux_candidates), step=1)
-            if fetch_k_aux not in set(fetchk_aux_candidates):
-                raise optuna.TrialPruned()
+            fetch_k_aux = trial.suggest_categorical("RAG_FETCH_K_AUX", fetchk_aux_candidates)
         else:
             fetch_k_aux = trial.suggest_int("RAG_FETCH_K_AUX", max(k*4, 40), 160, step=1)
 
         # RERANK_IN
         rerank_candidates = _parse_range(args.rerank_in_range, int)
         if rerank_candidates:
-            rerank_in = trial.suggest_int("RAG_RERANK_IN", min(rerank_candidates), max(rerank_candidates), step=1)
-            if rerank_in not in set(rerank_candidates):
-                raise optuna.TrialPruned()
+            rerank_in = trial.suggest_categorical("RAG_RERANK_IN", rerank_candidates)
         else:
             rerank_in = trial.suggest_int("RAG_RERANK_IN", 12, 48, step=1)
+
 
         # 제목 캡
         title_cap_choices = _parse_choices(args.title_cap_choices, int)
