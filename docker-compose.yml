@@ -60,6 +60,7 @@ services:
       mongo: { condition: service_healthy }
       redis: { condition: service_started }
     environment:
+      SPRING_PROFILES_ACTIVE: docker
       # JwtCryptoConfig / JwtProvider 에 들어가는 값들(RELAXED BINDING)
       JWT_SECRET: ${JWT_SECRET}
       JWT_SECRET_IS_BASE64: ${JWT_SECRET_B64}
