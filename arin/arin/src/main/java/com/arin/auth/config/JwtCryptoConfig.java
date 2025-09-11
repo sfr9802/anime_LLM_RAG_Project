@@ -20,7 +20,7 @@ public class JwtCryptoConfig {
     @Bean
     public SecretKey jwtHmacKey(
             @Value("${jwt.secret}") String secret,
-            @Value("${jwt.secret.is-base64:false}") boolean isBase64
+            @Value("${jwt.is-base64:false}") boolean isBase64
     ) {
         String s = (secret == null) ? "" : secret.trim();
         if (s.startsWith("\"") && s.endsWith("\"") && s.length() >= 2) {

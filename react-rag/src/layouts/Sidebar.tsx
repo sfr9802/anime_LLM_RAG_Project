@@ -24,7 +24,7 @@ export default function Sidebar({ collapsed }: SidebarProps) {
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      <div className="sidebar-header">{collapsed ? "💬" : "💬 GPT Clone"}</div>
+      <div className="sidebar-header">{collapsed ? "💬" : "💬 Anime RAG"}</div>
 
       <nav className="chat-list">
         <button className="new-chat-btn" onClick={handleNewChat}>

@@ -113,9 +113,23 @@ class ChromaOnlyStrategy(RetrievalStrategy):
                 weights = [1.0] * len(lists) + [a]
                 items = _rrf_merge_weighted(lists + [bm], weights=weights, K=rrf_K)
             except Exception:
+                use_w = os.getenv("RAG_USE_WEIGHTED_EXP", "true").lower() in ("1","true","yes")
+            if use_w:
+                a0 = float(os.getenv("RAG_EXP_ALPHA", "1.0"))     # 메인 질의 가중
+                decay = float(os.getenv("RAG_EXP_DECAY", "0.6"))  # 확장 가중 감쇠
+                weights = [a0] + [a0 * (decay ** i) for i in range(len(lists)-1)]
+                items = _rrf_merge_weighted(lists, weights=weights, K=int(os.getenv("RAG_RRF_K", "60")))
+            else:
                 items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
         else:
-            items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
+            use_w = os.getenv("RAG_USE_WEIGHTED_EXP", "true").lower() in ("1","true","yes")
+            if use_w:
+                a0 = float(os.getenv("RAG_EXP_ALPHA", "1.0"))     # 메인 질의 가중
+                decay = float(os.getenv("RAG_EXP_DECAY", "0.6"))  # 확장 가중 감쇠
+                weights = [a0] + [a0 * (decay ** i) for i in range(len(lists)-1)]
+                items = _rrf_merge_weighted(lists, weights=weights, K=int(os.getenv("RAG_RRF_K", "60")))
+            else:
+                items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
 
         base = self._dedup_and_score(service, items)
 
@@ -191,7 +205,37 @@ class ChromaOnlyStrategy(RetrievalStrategy):
                 chosen = { _rrf_id(it) for it in reranked }
                 tail = [it for it in merged[rerank_in:] if _rrf_id(it) not in chosen]
                 reranked.extend(tail[: k - len(reranked)])
+
+            # ── 최종 하드 디듑(옵션) ─────────────────────────────────────────
+            final_mode = (os.getenv("RAG_FINAL_DEDUP_BY", "none") or "none").lower()
+            if final_mode == "title":
+                out = _cap_by_title(reranked, cap=1)
+                if len(out) < k:
+                    seen = { ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                             for it in out }
+                    for it in merged[rerank_in:]:
+                        t = ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                        if t and t in seen:
+                            continue
+                        out.append(it); seen.add(t)
+                        if len(out) >= k: break
+                return out[:k]
+            # ────────────────────────────────────────────────────────────────
             return reranked[:k]
+
+        final_mode = (os.getenv("RAG_FINAL_DEDUP_BY", "none") or "none").lower()
+        if final_mode == "title":
+            out = _cap_by_title(merged, cap=1)
+            if len(out) < k:
+                seen = { ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                         for it in out }
+                for it in merged:
+                    t = ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                    if t and t in seen:
+                        continue
+                    out.append(it); seen.add(t)
+                    if len(out) >= k: break
+            return out[:k]
         return merged[:k]
 
 

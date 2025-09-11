@@ -80,32 +80,73 @@ def _gold_keys_for_meta(m: Dict, by: str) -> List[str]:
         where = {"title": t}
 
     res = coll.get(where=where, include=["metadatas"], limit=6666)
-    items = [{"metadata": md, "id": _id} for md, _id in zip(res.get("metadatas") or [], res.get("ids") or [])]
+    items = [{"metadata": md, "id": _id}
+             for md, _id in zip(res.get("metadatas") or [], res.get("ids") or [])]
     keys = keys_from_docs(items, by=by if by in ("title","seed","doc") else "title")
+
     uniq, seen = [], set()
     for k in keys:
-        if k in seen: continue
-        seen.add(k); uniq.append(k)
+        if k in seen: 
+            continue
+        seen.add(k)
+        uniq.append(k)
     return uniq
 
+
 def _make_queries_from_meta(m: Dict) -> List[str]:
-    t = m.get("seed_title") or m.get("parent") or m.get("title") or ""
-    qs: List[str] = []
-    if t:
-        qs += [t, f"{t} 요약", f"{t} 줄거리", f"{t} 등장인물"]
-    qs += _split_csv(m.get("aliases_csv"))
-    qs += _split_csv(m.get("aliases_norm_csv"))
-    for key in ("aliases", "aliases_norm", "original_title", "alt_title"):
+    title = m.get("seed_title") or m.get("parent") or m.get("title") or ""
+    # ── ban set: title/alias의 '정확 동일 표면형'만 금지 ──
+    ban = set()
+    if title:
+        ban.add(_norm(title))
+
+    # aliases 수집
+    alias_strs: List[str] = []
+    for key in ("aliases", "aliases_norm"):
         v = m.get(key)
-        if isinstance(v, list): qs += v[:2]
-        elif isinstance(v, str): qs.append(v)
+        if isinstance(v, list):
+            alias_strs.extend([x for x in v if x])
+
+    alias_strs.extend(_split_csv(m.get("aliases_csv")))
+    alias_strs.extend(_split_csv(m.get("aliases_norm_csv")))
+    for key in ("original_title", "alt_title"):
+        v = m.get(key)
+        if isinstance(v, str):
+            alias_strs.append(v)
+
+    # ban에 alias 표면형 추가
+    for a in alias_strs:
+        na = _norm(a)
+        if na: 
+            ban.add(na)
+
+    # ── 후보 쿼리 생성(표면형 그대로는 넣지 않음) ──
+    qs: List[str] = []
+    if title:
+        qs += [f"{title} 요약", f"{title} 줄거리", f"{title} 등장인물"]
+
+    # alias 기반 변형 쿼리(그 자체 표면형은 ban으로 걸러짐)
+    for a in alias_strs[:2]:
+        a = a.strip()
+        if len(a) >= 2:
+            qs += [f"{a} 요약", f"{a} 줄거리"]
+
+    # 중복/ban 제거
     uniq, seen = [], set()
     for q in qs:
         q = q.strip()
-        if len(q) < 2: continue
-        if q in seen: continue
-        seen.add(q); uniq.append(q)
+        if len(q) < 2:
+            continue
+        nq = _norm(q)
+        if nq in ban:          # 정확히 같은 표면형은 컷
+            continue
+        if q in seen:
+            continue
+        seen.add(q)
+        uniq.append(q)
+
     return uniq
+
 
 def _sample_from_chroma(max_docs: int, section_hint: str = "요약") -> List[Dict]:
     from app.app.infra.vector.chroma_store import get_collection

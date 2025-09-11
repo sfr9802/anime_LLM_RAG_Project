@@ -1,0 +1,38 @@
+FROM pytorch/pytorch:2.2.2-cuda12.8-cudnn8-devel
+
+COPY . /app
+WORKDIR /app
+
+# 시스템 패키지 업데이트 및 기본 도구 설치
+RUN apt-get update && apt-get install -y \
+    git curl wget unzip \
+    && apt-get clean
+
+# Python 패키지 설치
+RUN pip install --no-cache-dir \
+    sentence-transformers \
+    faiss-gpu \
+    transformers \
+    accelerate \
+    fastapi \
+    uvicorn \
+    httpx \
+    tqdm \
+    numpy \
+    pandas \
+    langchain \
+    openai 
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl wget && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+# requirements.txt를 rag_demo 루트에 두고 관리 (없으면 만들어)
+COPY ./requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 소스 복사 (네 구조: rag_demo/app/app/…)
+COPY ./app ./app
+
+ENV PYTHONUNBUFFERED=1 TZ=Asia/Seoul
+EXPOSE 9000

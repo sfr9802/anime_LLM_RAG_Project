@@ -2,6 +2,20 @@
 from __future__ import annotations
 import os
 from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
+
+CANDIDATES = [
+    Path(__file__).resolve().parent / ".env",            # configure/.env
+    Path.cwd() / ".env",                                 # 프로젝트 루트
+    Path(__file__).resolve().parents[1] / ".env",        # 상위 폴더
+]
+for p in CANDIDATES:
+    if p.exists():
+        load_dotenv(dotenv_path=p, override=False)
+        break
+else:
+    # 마지막으로 시스템 PATH 기준 자동 탐색
+    load_dotenv(find_dotenv(), override=False)
 
 # ── .env 로더 (dotenv 없으면 수동 파싱) ─────────────────────────────────────
 def _load_env_file(path: Path) -> None:

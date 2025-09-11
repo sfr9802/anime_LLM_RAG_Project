@@ -1,0 +1,131 @@
+version: "3.9"
+name: rag-stack
+
+services:
+  # === LLM(OpenAI 호환 /v1) ===
+  llm:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    command: >
+      --model /models/gemma-2-9b-it-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port ${LLM_PORT}
+      --api
+      --ctx-size 8192
+      --n-gpu-layers -1
+    volumes:
+      - ./models:/models:ro       # 호스트 D:\port\models 에 모델 넣어라
+    ports:
+      - "${LLM_PORT}:${LLM_PORT}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu] # GPU 없으면 이 블럭 지워
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:${LLM_PORT}/v1/models"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports: ["${REDIS_PORT}:6379"]
+    volumes: [ "redis-data:/data" ]
+
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+      MONGO_INITDB_DATABASE: ${MONGO_DB}
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASS: ${MONGO_PASS}
+    ports: ["${MONGO_PORT}:27017"]
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep 1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # === Spring 미들웨어 ===
+  spring:
+    build:
+      context: ./arin/arin
+      dockerfile: Dockerfile
+    depends_on:
+      llm: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+      redis: { condition: service_started }
+    environment:
+      # JwtCryptoConfig / JwtProvider 에 들어가는 값들(RELAXED BINDING)
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET_IS_BASE64: ${JWT_SECRET_B64}
+      JWT_ISSUER: ${JWT_ISS}
+      JWT_AUDIENCE: ${JWT_AUD}
+      JWT_EXPIRATION: 3600000
+      JWT_REFRESH_EXPIRATION: 604800000
+
+      # 백엔드 타겟
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      REDIS_URL: redis://redis:6379
+      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/?authSource=${MONGO_DB}
+      MONGO_DB: ${MONGO_DB}
+    ports: ["${SPRING_PORT}:8080"]
+
+  # === FastAPI (rag_demo) ===
+  fastapi:
+    build:
+      context: ./rag_demo
+      dockerfile: Dockerfile
+    depends_on:
+      llm: { condition: service_healthy }
+      spring: { condition: service_started }
+      mongo: { condition: service_healthy }
+      redis: { condition: service_started }
+    environment:
+      CHROMA_DB_DIR: ${CHROMA_DB_DIR}
+      CHROMA_COLLECTION: ${CHROMA_COLLECTION}
+      CHROMA_SPACE: cosine
+
+      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/?authSource=${MONGO_DB}
+      MONGO_DB: ${MONGO_DB}
+
+      RAG_EMBED_MODEL: BAAI/bge-m3
+      RAG_EMBED_BATCH: "64"
+
+      LLM_PROVIDER: local_http
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL_ALIAS: gemma-2-9b-it
+
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET_B64: ${JWT_SECRET_B64}
+      JWT_ISS: ${JWT_ISS}
+      JWT_AUD: ${JWT_AUD}
+      LOG_LEVEL: INFO
+    volumes:
+      - chroma-data:/data/chroma
+      - hf-cache:/root/.cache/huggingface
+    ports: ["${FASTAPI_PORT}:9000"]
+    command: >
+      uvicorn app.app.main:app
+      --host 0.0.0.0
+      --port 9000
+      --workers 1
+
+  # === React (react-rag) + nginx 프록시 ===
+  web:
+    build:
+      context: ./react-rag
+      dockerfile: Dockerfile
+    depends_on:
+      spring: { condition: service_started }
+    ports: ["${WEB_PORT}:80"]
+
+volumes:
+  mongo-data:
+  redis-data:
+  chroma-data:
+  hf-cache:

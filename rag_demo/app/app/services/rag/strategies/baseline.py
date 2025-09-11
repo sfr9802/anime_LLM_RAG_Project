@@ -87,10 +87,46 @@ class BaselineStrategy(RetrievalStrategy):
         if service._reranker and rerank_in > 0:
             reranked = self._rerank(service, q, merged[:rerank_in], k)
             if len(reranked) < k:
-                # 남은 슬롯은 미-재정렬 구간에서 순서대로 보충
-                tail = [it for it in merged[rerank_in:] if it not in reranked]
+                # (버그픽스) 동일 문서 중복 차단: id/doc_id 기준으로 tail 보충
+                chosen = { (it.get("metadata", {}) or {}).get("doc_id") or it.get("id") for it in reranked }
+                def _uid(x):
+                    md = x.get("metadata", {}) or {}
+                    return md.get("doc_id") or x.get("id")
+                tail = [it for it in merged[rerank_in:] if _uid(it) not in chosen]
                 reranked.extend(tail[: k - len(reranked)])
+
+            # ── 최종 하드 디듑(옵션) ─────────────────────────────────────────
+            final_mode = (os.getenv("RAG_FINAL_DEDUP_BY", "none") or "none").lower()
+            if final_mode == "title":
+                # title 기준 유니크 보장 후, 모자라면 꼬리에서 채움
+                out = _cap_by_title(reranked, cap=1)
+                if len(out) < k:
+                    seen = { ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                             for it in out }
+                    for it in merged[rerank_in:]:
+                        t = ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                        if t and t in seen:
+                            continue
+                        out.append(it); seen.add(t)
+                        if len(out) >= k: break
+                return out[:k]
+            # ────────────────────────────────────────────────────────────────
             return reranked[:k]
+
+        # (rerank 미사용 케이스)
+        final_mode = (os.getenv("RAG_FINAL_DEDUP_BY", "none") or "none").lower()
+        if final_mode == "title":
+            out = _cap_by_title(merged, cap=1)
+            if len(out) < k:
+                seen = { ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                         for it in out }
+                for it in merged:
+                    t = ( (it.get("metadata", {}) or {}).get("title") or it.get("title") or "" ).strip().lower()
+                    if t and t in seen:
+                        continue
+                    out.append(it); seen.add(t)
+                    if len(out) >= k: break
+            return out[:k]
         return merged[:k]
 
 
