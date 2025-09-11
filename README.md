@@ -10,6 +10,15 @@
 
 - 엔드투엔드 플로우: 질의(Query) → 임베딩 → 검색(Retrieval) → MMR → 재랭킹 → 프롬프트 → LLM 응답  
 - **Docker Compose** 기반으로 로컬 개발, GPU 추론, 모듈형 오케스트레이션 지원.
+ 
+## ⚙️ Configuration
+
+로컬 개발과 `docker-compose` 배포 환경에 맞춰 설정 파일을 분리했습니다.
+
+- **로컬**: `.env.local`과 기본 `application.yml`을 `.env`와 함께 사용
+- **Docker**: `.env.docker`와 `application-docker.yml`을 사용하며 `SPRING_PROFILES_ACTIVE=docker`
+
+각 환경에 맞는 파일을 `.env`로 복사한 뒤 서비스를 실행하세요.
 
 ---
 
