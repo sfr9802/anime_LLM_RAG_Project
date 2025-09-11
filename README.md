@@ -163,7 +163,7 @@ app/
   ![login](/image/ui_login_placeholder.png)
 
 - 대화형 RAG 화면 (질문/답변 + 참조 문서)  
-  ![chat](/image/ui_chat_placeholder.png)
+  ![chat](/image/ui_chat.png)
 
 ---
 
