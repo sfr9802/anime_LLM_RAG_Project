@@ -1,38 +1,24 @@
-FROM pytorch/pytorch:2.2.2-cuda12.8-cudnn8-devel
+# PyTorch + CUDA 12.8 + cuDNN9 (이미 torch/torchvision 설치됨)
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
 
-COPY . /app
-WORKDIR /app
-
-# 시스템 패키지 업데이트 및 기본 도구 설치
-RUN apt-get update && apt-get install -y \
-    git curl wget unzip \
-    && apt-get clean
-
-# Python 패키지 설치
-RUN pip install --no-cache-dir \
-    sentence-transformers \
-    faiss-gpu \
-    transformers \
-    accelerate \
-    fastapi \
-    uvicorn \
-    httpx \
-    tqdm \
-    numpy \
-    pandas \
-    langchain \
-    openai 
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl wget && rm -rf /var/lib/apt/lists/*
+ENV PYTHONUNBUFFERED=1 \
+    TZ=Asia/Seoul \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/root/.cache/huggingface
 
 WORKDIR /app
-# requirements.txt를 rag_demo 루트에 두고 관리 (없으면 만들어)
-COPY ./requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# 소스 복사 (네 구조: rag_demo/app/app/…)
-COPY ./app ./app
+# 1) 의존성 먼저 복사 → 캐시 최대 활용
+COPY requirements.txt .
 
-ENV PYTHONUNBUFFERED=1 TZ=Asia/Seoul
+# 2) 파이썬 패키지 설치 (torch는 requirements.txt에 넣지 말 것)
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 3) 애플리케이션 소스
+COPY app ./app
+
 EXPOSE 9000
+
+# compose에서 command 지정 안 하면 아래가 기본으로 실행됨
+CMD ["uvicorn", "app.app.main:app", "--host", "0.0.0.0", "--port", "9000", "--workers", "1"]
