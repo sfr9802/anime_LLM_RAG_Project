@@ -2,8 +2,13 @@
   display: flex;
   height: 100vh;
   width: 100%;
-  background-color: var(--lala-night);
-  color: var(--lala-white);
+  background-color: #fff;
+  color: #000;
+}
+
+.dark .layout-container {
+  background-color: #121212;
+  color: #fff;
 }
 
 .main-area {
@@ -19,9 +24,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 10px 16px;
-  background: linear-gradient(to right, var(--lala-purple), var(--lala-pink));
-  border-bottom: 1px solid var(--lala-yellow);
-  color: var(--lala-white);
+  border-bottom: 1px solid currentColor;
 }
 
 .left-controls {
@@ -33,13 +36,12 @@
 .logo {
   font-weight: bold;
   font-size: 20px;
-  color: var(--lala-yellow);
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+  color: inherit;
   text-decoration: none;
 }
 
 .logo:hover {
-  color: var(--lala-pink);
+  text-decoration: underline;
 }
 
 .auth-controls {
@@ -53,9 +55,13 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--lala-white);
+  color: inherit;
 }
 
 .sidebar-toggle:hover {
-  color: var(--lala-yellow);
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.dark .sidebar-toggle:hover {
+  background-color: rgba(255, 255, 255, 0.1);
 }

@@ -1,8 +1,13 @@
 /* styles/global.css */
 body {
-  transition: background 0.2s ease;
+  margin: 0;
+  font-family: 'Playfair Display', 'Noto Sans KR', serif;
+  background-color: #fff;
+  color: #000;
+  transition: background 0.2s ease, color 0.2s ease;
 }
+
 .dark body {
   background-color: #121212;
-  color: white;
+  color: #fff;
 }

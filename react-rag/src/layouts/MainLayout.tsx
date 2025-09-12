@@ -3,7 +3,6 @@ import { useState } from "react";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useAuth } from "@/contexts/AuthContext";
 import Sidebar from "./Sidebar";
-import "@/styles/lalaland_st.css";
 import "./MainLayout.css";
 import "@/styles/components.css";
 
@@ -40,7 +39,7 @@ export default function MainLayout({ children, minimal = false }: Props) {
           <header className="layout-header">
             <div className="left-controls">
               <button className="sidebar-toggle button-lala" onClick={toggleSidebar}>≡</button>
-              <a href="/" className="logo" aria-label="홈으로 이동" style={{ color: "var(--lala-yellow)" }}>
+              <a href="/" className="logo" aria-label="홈으로 이동">
                 GPT Clone
               </a>
             </div>
