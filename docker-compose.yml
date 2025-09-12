@@ -32,6 +32,22 @@ services:
     ports: ["${REDIS_PORT}:6379"]
     volumes: [ "redis-data:/data" ]
 
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASS}
+      MYSQL_DATABASE: ${MYSQL_DB}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASS}
+    ports: ["${MYSQL_PORT}:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
   mongo:
     image: mongo:7
     environment:
@@ -57,6 +73,7 @@ services:
       dockerfile: Dockerfile
     depends_on:
       llm: { condition: service_healthy }
+      mysql: { condition: service_healthy }
       mongo: { condition: service_healthy }
       redis: { condition: service_started }
     environment:
@@ -128,5 +145,6 @@ services:
 volumes:
   mongo-data:
   redis-data:
+  mysql-data:
   chroma-data:
   hf-cache:
