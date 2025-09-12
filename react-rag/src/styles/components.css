@@ -1,18 +1,20 @@
 /* src/styles/components.css */
 .button-lala {
-  background-color: var(--lala-pink);
-  color: white;
+  background: none;
+  color: inherit;
   padding: 0.6rem 1.2rem;
-  border: none;
+  border: 1px solid currentColor;
   border-radius: 0.75rem;
   font-family: 'Playfair Display', serif;
   cursor: pointer;
   font-weight: bold;
-  box-shadow: 0 4px 10px rgba(237, 110, 160, 0.3);
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease;
 }
 
 .button-lala:hover {
-  background-color: var(--lala-purple);
-  box-shadow: 0 0 12px rgba(237, 110, 160, 0.5);
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.dark .button-lala:hover {
+  background-color: rgba(255, 255, 255, 0.1);
 }
