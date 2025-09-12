@@ -121,7 +121,7 @@ app/
 
 조건: N=400, k=8, space=cosine, embed=BAAI/bge-m3 (L2 norm), MMR(lam=0.65), match_by=title, distinct_by=title, reranker=keep
 
-| Metric              | Value        |  Notes                               |
+| Metric              | Value        | Notes                               |
 | ------------------- | ------------ | ----------------------------------- |
 | **Hit\@8**          | **0.8421**   | 쿼리당 1개라도 정답 타이틀 매칭 시 1              |
 | **Recall\@8**       | **0.8421**   | title 매칭 + title 단위 dedup 기준        |
@@ -130,6 +130,7 @@ app/
 | **Recall\@50(raw)** | **0.8421**   | rerank/dedup 전 원시 Top-50 검색 기준      |
 | **dup\_rate**       | **0.0000**   | 제목/문서 ID 중복 기준                      |
 | **p95 latency**     | **178.29ms** | retrieval 모듈 기준(`/rag/ask` 중 검색 구간) |
+
 
 
 **환경**: Ryzen 7 9800X3D / 64GB RAM / RTX 5080 (VRAM 16GB)  
