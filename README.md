@@ -176,6 +176,5 @@ app/
 ---
 
 ## 📎 Links
-- **Blog**: 아키텍처/구현 기록 (Tistory)
-- **Dataset**: Hugging Face — `ArinNya/namuwiki_anime`
-- **Collections**: `collections/rag-demo.json`
+- **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)
+- **Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
