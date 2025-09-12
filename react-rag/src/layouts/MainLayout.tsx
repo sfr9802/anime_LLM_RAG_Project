@@ -1,6 +1,6 @@
 // layouts/MainLayout.tsx
 import { useState } from "react";
-import { useDarkMode } from "@/hooks/useDarkMode";
+import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import Sidebar from "./Sidebar";
 import "./MainLayout.css";
@@ -12,7 +12,7 @@ interface Props {
 }
 
 export default function MainLayout({ children, minimal = false }: Props) {
-  const [darkMode, setDarkMode] = useDarkMode();
+  const [theme, setTheme] = useTheme();
   const { user, loading, logout } = useAuth();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -45,8 +45,19 @@ export default function MainLayout({ children, minimal = false }: Props) {
             </div>
 
             <div className="auth-controls">
-              <button className="button-lala" onClick={() => setDarkMode((prev) => !prev)}>
-                {darkMode ? "☀️" : "🌙"}
+              <button
+                className="button-lala"
+                onClick={() => {
+                  const next =
+                    theme === "light"
+                      ? "dark"
+                      : theme === "dark"
+                      ? "lalaland_st"
+                      : "light";
+                  setTheme(next);
+                }}
+              >
+                {theme === "light" ? "🌙" : theme === "dark" ? "🌈" : "☀️"}
               </button>
 
               {!loading && (
