@@ -4,12 +4,11 @@ name: rag-stack
 services:
   # === LLM(OpenAI 호환 /v1) ===
   llm:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
     command: >
-      --model /models/gemma-2-9b-it-Q4_K_M.gguf
+      --model /models/gemma-2-9b-it-Q4_K_M-fp16.gguf
       --host 0.0.0.0
       --port ${LLM_PORT}
-      --api-server
       --ctx-size 8192
       --n-gpu-layers -1
     volumes:
@@ -22,7 +21,7 @@ services:
           devices:
             - capabilities: [gpu] # GPU 없으면 이 블럭 지워
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:${LLM_PORT}/v1/models"]
+      test: ["CMD", "curl", "-sf", "http://localhost:${LLM_PORT}/v1/models"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -31,7 +30,11 @@ services:
     image: redis:7-alpine
     ports: ["${REDIS_PORT}:6379"]
     volumes: [ "redis-data:/data" ]
-
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
   mysql:
     image: mysql:8
     environment:
@@ -68,17 +71,24 @@ services:
 
   # === Spring 미들웨어 ===
   spring:
+    env_file:
+      - ./secrets/google-oauth.env
     build:
       context: ./arin/arin
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     depends_on:
-      llm: { condition: service_healthy }
+      llm:   { condition: service_healthy }
       mysql: { condition: service_healthy }
       mongo: { condition: service_healthy }
-      redis: { condition: service_started }
+      redis: { condition: service_healthy }   # ← 변경
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      # JwtCryptoConfig / JwtProvider 에 들어가는 값들(RELAXED BINDING)
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_TIMEOUT: 2s
+      APP_FRONT_ORIGIN: http://localhost
+
+      # JWT (양쪽 이름 맞춤)
       JWT_SECRET: ${JWT_SECRET}
       JWT_SECRET_IS_BASE64: ${JWT_SECRET_B64}
       JWT_ISSUER: ${JWT_ISS}
@@ -86,18 +96,29 @@ services:
       JWT_EXPIRATION: 3600000
       JWT_REFRESH_EXPIRATION: 604800000
 
-      # 백엔드 타겟
+      # Redis: host/port만 사용 (권장) ─ URL 항목 삭제
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      # SPRING_DATA_REDIS_URL: redis://redis:6379   # ← URL로 줄 거면 이 키로 (택1)
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DB}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASS}
+
+      # LLM
       LLM_BASE_URL: ${LLM_BASE_URL}
-      REDIS_URL: redis://redis:6379
-      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/?authSource=${MONGO_DB}
-      MONGO_DB: ${MONGO_DB}
+
+      # Mongo: Spring이 진짜 쓸 때만 정확한 키로 (택1)
+      # SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/${MONGO_DB}?authSource=${MONGO_DB}
+      # MONGO_DB: ${MONGO_DB}  # 위 URI 쓰면 별도 필요 X
+
     ports: ["${SPRING_PORT}:8080"]
+
 
   # === FastAPI (rag_demo) ===
   fastapi:
     build:
       context: ./rag_demo
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     depends_on:
       llm: { condition: service_healthy }
       spring: { condition: service_started }

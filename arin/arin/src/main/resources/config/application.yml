@@ -42,9 +42,10 @@ jwt:
 
 app:
   oauth2:
-    redirect-uri: http://localhost:5173/oauth/success-popup
+    redirect-uri: http://localhost/oauth/success-popup
     allowed-origins:
-      - http://localhost:5173
+      - http://localhost
+      - http://127.0.0.1
   security:
     refresh-cookie:
       name: refresh_token

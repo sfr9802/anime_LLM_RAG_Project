@@ -8,7 +8,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
@@ -38,24 +37,25 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         Long userId = user.getId();
         String role  = user.getRole();
 
-        // 1) 토큰 발급 (여기서 refresh 세션도 저장해 바인딩)
+        // 1) 토큰 발급
         String access  = jwtProvider.generateAccessToken(userId, role);
         String refresh = jwtProvider.generateRefreshToken(userId, role);
 
+        // 2) refresh 세션 바인딩 (UA/IP 등)
         Claims refClaims = jwtProvider.getClaims(refresh);
         String jti = refClaims.getId();
         long ttlMillis = Math.max(0, refClaims.getExpiration().getTime() - System.currentTimeMillis());
-        tokenService.saveRefreshSession(userId, jti, req, ttlMillis); // UA/IP 바인딩
+        tokenService.saveRefreshSession(userId, jti, req, ttlMillis);
 
-        // 2) 1회용 코드(OTC) 발급 — 60초 권장 (refresh TTL보다 길어지지 않음)
+        // 3) 1회용 코드 발급
         String code = tokenService.issueOneTimeCode(userId, access, refresh, 60);
 
-        // 3) 프론트 리다이렉트 (code만 전달; 토큰/쿠키 없음)
+        // 4) 프론트 리다이렉트 (code만 전달)
         String base = pickRedirectBase(req, props);
         String location = UriComponentsBuilder.fromUriString(base)
                 .replaceQuery(null)
                 .queryParam("code", code)
-                .queryParam("state", UUID.randomUUID().toString()) // 선택: 추적용
+                .queryParam("state", UUID.randomUUID().toString())
                 .build(true)
                 .toUriString();
 
@@ -66,13 +66,17 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         res.sendRedirect(location);
     }
 
-    /** 세션(frontRedirect) > 요청 ?front= > 설정값 순서 + origin 화이트리스트 */
+    /**
+     * 세션(frontRedirect) > 요청 ?front= > 설정값(app.oauth2.redirect-uri) 순서 + origin 화이트리스트
+     */
     private static String pickRedirectBase(HttpServletRequest req, AppOAuthProps props) {
+        // 기본값: nginx:80 기준
         String configured = Optional.ofNullable(props.getRedirectUri())
                 .filter(s -> !s.isBlank())
-                .orElse("http://localhost:5173/oauth/success-popup");
+                .orElse("http://localhost/oauth/success-popup");
 
         String candidate = null;
+
         var session = req.getSession(false);
         if (session != null) {
             Object v = session.getAttribute("frontRedirect");
@@ -81,7 +85,9 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
                 session.removeAttribute("frontRedirect");
             }
         }
-        if (candidate == null) candidate = req.getParameter("front");
+        if (candidate == null) {
+            candidate = req.getParameter("front");
+        }
 
         return (isAllowedFront(candidate, props.getAllowedOrigins())) ? candidate : configured;
     }
@@ -89,19 +95,29 @@ public class CustomOAuth2SuccessHandler implements AuthenticationSuccessHandler 
     private static boolean isAllowedFront(String url, List<String> allowedOrigins) {
         if (url == null || url.isBlank() || allowedOrigins == null || allowedOrigins.isEmpty()) return false;
         try {
-            URI u = URI.create(url);
-            String origin = u.getScheme() + "://" + u.getHost() + ((u.getPort() > 0) ? (":" + u.getPort()) : "");
+            String origin = toNormalizedOrigin(url);
             return allowedOrigins.stream()
                     .filter(Objects::nonNull)
-                    .map(CustomOAuth2SuccessHandler::normalizeOrigin)
+                    .map(CustomOAuth2SuccessHandler::toNormalizedOrigin)
                     .anyMatch(origin::equals);
-        } catch (Exception ignored) { return false; }
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
-    private static String normalizeOrigin(String s) {
-        try {
-            URI u = URI.create(s);
-            return u.getScheme() + "://" + u.getHost() + ((u.getPort() > 0) ? (":" + u.getPort()) : "");
-        } catch (Exception e) { return s; }
+    /** 기본 포트(http:80 / https:443)는 제거해서 비교 일관성 확보 */
+    private static String toNormalizedOrigin(String s) {
+        URI u = URI.create(s);
+        String scheme = u.getScheme();
+        String host = u.getHost();
+        int port = u.getPort();
+
+        boolean isDefaultPort =
+                (port == -1) ||
+                        ("http".equalsIgnoreCase(scheme) && port == 80) ||
+                        ("https".equalsIgnoreCase(scheme) && port == 443);
+
+        String portPart = isDefaultPort ? "" : (":" + port);
+        return scheme + "://" + host + portPart;
     }
 }

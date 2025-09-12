@@ -2,17 +2,36 @@ spring:
   config:
     activate:
       on-profile: docker
+
   datasource:
-    url: jdbc:mysql://mysql:3306/arin
-  redis:
-    host: redis
-    port: 6379
-    timeout: 2000
+    url: jdbc:mysql://mysql:3306/${MYSQL_DB:arin}?characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
+    username: ${MYSQL_USER}
+    password: ${MYSQL_PASS}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  data:
+    redis:                # ← 여기! spring.data.redis 로 고쳐
+      host: ${SPRING_DATA_REDIS_HOST:${REDIS_HOST:redis}}
+      port: ${SPRING_DATA_REDIS_PORT:${REDIS_PORT:6379}}
+      timeout: 2s         # 숫자 2000 대신 Duration 문법 권장
+      connect-timeout: 2s
 
 app:
+  front:
+    origin: ${APP_FRONT_ORIGIN:http://localhost}
   oauth2:
     redirect-uri: http://localhost/oauth/success-popup
     allowed-origins:
       - http://localhost
+      - http://127.0.0.1
+
 proxy:
   upstream: http://fastapi:9000
+
+server:
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        same-site: Lax    # 로컬 http에서 state/쿠키 문제 방지
+        secure: false

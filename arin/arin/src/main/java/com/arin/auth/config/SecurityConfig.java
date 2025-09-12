@@ -4,6 +4,7 @@ import com.arin.auth.jwt.JwtBlacklistFilter;
 import com.arin.auth.oauth.CustomOAuth2SuccessHandler;
 import com.arin.auth.oauth.CustomOAuth2UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.convert.converter.Converter;
@@ -41,7 +42,8 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .cors(Customizer.withDefaults())
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+//                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
 
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -111,24 +113,27 @@ public class SecurityConfig {
      * - allowedOrigins는 정확히 한정 (와일드카드 금지)
      */
     // SecurityConfig.java
+    // SecurityConfig.java
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
+    public CorsConfigurationSource corsConfigurationSource(
+            @Value("${app.front.origin:http://localhost}") String frontOrigin) {
         CorsConfiguration cfg = new CorsConfiguration();
         cfg.setAllowCredentials(true);
-        // 개발은 정확히 프론트 오리진만 허용 (와일드카드 금지)
-        cfg.addAllowedOrigin("http://localhost:5173");
 
-        // 메서드/헤더는 넉넉히
-        cfg.addAllowedMethod(CorsConfiguration.ALL);
-        cfg.addAllowedHeader(CorsConfiguration.ALL);
+        // nginx 80 기준 오리진 허용
+        cfg.setAllowedOriginPatterns(List.of(
+                frontOrigin,
+                "http://127.0.0.1"
+        ));
 
-        // 디버깅 편하게
-        cfg.addExposedHeader("Set-Cookie");
-        cfg.addExposedHeader("X-Trace-Id");
+        cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+        cfg.setAllowedHeaders(List.of("*"));
+        cfg.setExposedHeaders(List.of("Set-Cookie","X-Trace-Id"));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);
         return source;
     }
+
 
 }
