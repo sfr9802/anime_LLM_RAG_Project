@@ -117,19 +117,24 @@ app/
 
 ---
 
-## 📈 Bench (2025-09-09, retrieval-only)
+## 📈 Bench (2025-09-12, retrieval-only)
 
-조건: `N=400`, `k=6`, `space=cosine`, `embed=BAAI/bge-m3 (L2 norm)`, `MMR(lam=0.5)`
+조건: N=400, k=8, space=cosine, embed=BAAI/bge-m3 (L2 norm), MMR(lam=0.65), match_by=title, distinct_by=title, reranker=keep
 
-| Metric        | Value | Baseline (BM25) | Notes                         |
-|---------------|-------|-----------------|-------------------------------|
-| recall@5      | 0.56  | 0.42            | 튜닝 후 수치                  |
-| dup_rate      | 0.07  | -               | 제목/문서 ID 중복 기준        |
-| p95 latency   | 50ms  | -               | `/rag/ask` 중 Retrieval 구간   |
+| Metric              | Value        |  Notes                               |
+| ------------------- | ------------ | ----------------------------------- |
+| **Hit\@8**          | **0.8421**   | 쿼리당 1개라도 정답 타이틀 매칭 시 1              |
+| **Recall\@8**       | **0.8421**   | title 매칭 + title 단위 dedup 기준        |
+| **MRR**             | **0.8264**   |                                     |
+| **nDCG**            | **0.8494**   |                                     |
+| **Recall\@50(raw)** | **0.8421**   | rerank/dedup 전 원시 Top-50 검색 기준      |
+| **dup\_rate**       | **0.0000**   | 제목/문서 ID 중복 기준                      |
+| **p95 latency**     | **178.29ms** | retrieval 모듈 기준(`/rag/ask` 중 검색 구간) |
+
 
 **환경**: Ryzen 7 9800X3D / 64GB RAM / RTX 5080 (VRAM 16GB)  
 ※ 로컬 측정값. 클라우드/프로덕션과 다를 수 있음.
-
+※ 본 수치는 by=title + distinct_by=title 평가축 결과입니다. by=doc/seed로 바꾸면 절대값은 낮아집니다.
 ---
 
 ## 🖥️ UI 시연 자료 (Screenshots)
