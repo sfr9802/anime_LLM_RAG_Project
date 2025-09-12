@@ -139,7 +139,7 @@ app/
 **3) 메인 대화형 RAG UI**  
 ![메인 RAG UI](./image/app_main.png)
 
-**3) 메인 대화형 RAG UI 테마 변경**  
+**3.1) 메인 대화형 RAG UI 테마 변경**  
 ![테마 변경](./image/app_main_white_theme.png)
 
 **4) 실제 사용 UI**  
