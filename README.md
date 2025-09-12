@@ -2,6 +2,8 @@
 
 도메인 특화 **Retrieval-Augmented Generation (RAG)** 백엔드 (애니메이션 문서 기반).  
 데이터 크롤링 → 벡터 DB 튜닝 → 프롬프트 설계 → 보안 API까지 **엔드-투-엔드**로 구현.
+> - RawData, Vector DB, Prompt Template, Embedding Model 교체로 도메인 전환 가능  
+> - 애니메이션 문서 외에도 내부 문서, 법률, 기술 FAQ 등 다양한 활용 가능성
 
 > 📸 **Demo 스크린샷은 아래 _UI 시연 자료_ 섹션**에 배치했습니다. (빠르게 보고 싶다면 바로 스크롤 ↓)
 
@@ -25,6 +27,8 @@
 
 /models 디렉토리에 gemma-2-9b-it-Q4_K_M-fp16.gguf 모델이 필요합니다.
 
+구글 GCP의 OAuth2 id/key pair 필요합니다.
+
 ---
 
 ## 🔍 Core Projects
@@ -40,7 +44,7 @@
 
 - 대상: 애니메이션 관련 문서 7,700건 (2006~2025)
 - 처리: 등장인물/설정 등 하위 링크 재귀 수집, 광고/푸터 제거, 섹션/문단 기반 청킹 (avg ≈ 350 tokens)
-- 공개: Hugging Face 데이터셋 → **ArinNya/namuwiki_anime**
+- 공개: Hugging Face 데이터셋 → [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
 - 라이선스: 원본 `CC BY-NC-SA 2.0 KR` (비상업적, 동일조건변경허락)
 
 ### 3) Spring Security Middleware
