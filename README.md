@@ -135,6 +135,7 @@ app/
 
 **환경**: Ryzen 7 9800X3D / 64GB RAM / RTX 5080 (VRAM 16GB)  
 ※ 로컬 측정값. 클라우드/프로덕션과 다를 수 있음.
+
 ※ 본 수치는 by=title + distinct_by=title 평가축 결과입니다. by=doc/seed로 바꾸면 절대값은 낮아집니다.
 
 ---
