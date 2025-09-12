@@ -33,6 +33,10 @@
 
 ## 🔍 Core Projects
 
+### License
+- Code: Apache-2.0
+- Dataset: CC BY-NC-SA 2.0 KR (separate license). Non-commercial; ShareAlike.
+
 ### 1) RAG Backend API (2025)
 > FastAPI 기반 모듈화된 RAG 백엔드. 검색/재랭킹/응답 생성을 지원.
 
