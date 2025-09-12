@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import "./Sidebar.css";
 
 interface SidebarProps {
@@ -13,6 +14,7 @@ const menuItems = [
 export default function Sidebar({ collapsed }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, loading, logout } = useAuth();
 
   const currentPath = location.pathname;
   const isActive = (path: string) => currentPath === path;
@@ -43,6 +45,27 @@ export default function Sidebar({ collapsed }: SidebarProps) {
               </button>
             </li>
           ))}
+          {!loading && (
+            <li>
+              {user ? (
+                <button
+                  className="chat-item"
+                  onClick={logout}
+                  title="로그아웃"
+                >
+                  🚪 {collapsed ? "" : "로그아웃"}
+                </button>
+              ) : (
+                <button
+                  className="chat-item"
+                  onClick={() => navigate("/login")}
+                  title="로그인"
+                >
+                  🔑 {collapsed ? "" : "로그인"}
+                </button>
+              )}
+            </li>
+          )}
         </ul>
       </nav>
     </aside>
