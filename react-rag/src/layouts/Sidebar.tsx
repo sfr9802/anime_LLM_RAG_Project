@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { useDarkMode } from "@/hooks/useDarkMode";
+import { useTheme } from "@/hooks/useTheme";
 import "./Sidebar.css";
 
 interface SidebarProps {
@@ -16,7 +16,7 @@ export default function Sidebar({ collapsed }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading, logout } = useAuth();
-  const [darkMode, setDarkMode] = useDarkMode();
+  const [theme, setTheme] = useTheme();
 
   const currentPath = location.pathname;
   const isActive = (path: string) => currentPath === path;
@@ -32,10 +32,18 @@ export default function Sidebar({ collapsed }: SidebarProps) {
         {collapsed ? "💬" : "💬 Anime RAG"}
         <button
           className="theme-toggle"
-          onClick={() => setDarkMode(!darkMode)}
+          onClick={() => {
+            const next =
+              theme === "light"
+                ? "dark"
+                : theme === "dark"
+                ? "lalaland_st"
+                : "light";
+            setTheme(next);
+          }}
           title="테마 전환"
         >
-          {darkMode ? "🌞" : "🌙"}
+          {theme === "light" ? "🌙" : theme === "dark" ? "🌈" : "🌞"}
         </button>
       </div>
 

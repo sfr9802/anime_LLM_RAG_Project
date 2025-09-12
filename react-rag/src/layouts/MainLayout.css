@@ -11,6 +11,11 @@
   color: #fff;
 }
 
+.lalaland_st .layout-container {
+  background-color: #ffe6f0;
+  color: #301934;
+}
+
 .main-area {
   display: flex;
   flex-direction: column;
@@ -64,4 +69,8 @@
 
 .dark .sidebar-toggle:hover {
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+.lalaland_st .sidebar-toggle:hover {
+  background-color: rgba(255, 182, 193, 0.4);
 }
