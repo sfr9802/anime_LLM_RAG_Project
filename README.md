@@ -1,13 +1,29 @@
-# 🧠 Anime RAG Stack — Full Pipeline Portfolio
+# Anime RAG Stack — Full Pipeline Portfolio
 
 도메인 특화 **Retrieval-Augmented Generation (RAG)** 백엔드 (애니메이션 문서 기반).  
 데이터 크롤링 → 벡터 DB 튜닝 → 프롬프트 설계 → 보안 API까지 **엔드-투-엔드**로 구현.
 > - RawData, Vector DB, Prompt Template, Embedding Model 교체로 도메인 전환 가능  
 > - 애니메이션 문서 외에도 내부 문서, 법률, 기술 FAQ 등 다양한 활용 가능성
 
-> 📸 **Demo 스크린샷은 아래 _UI 시연 자료_ 섹션**에 배치했습니다. (빠르게 보고 싶다면 바로 스크롤 ↓)
+> **Demo 스크린샷은 아래 _UI 시연 자료_ 섹션**에 배치했습니다. (빠르게 보고 싶다면 바로 스크롤 ↓)
 
-## 🏗️ 아키텍처 개요
+## 요약
+
+| 항목       | 내용 |
+|------------|------|
+| **도메인** | 애니메이션 기반 문서 RAG (2006~2025년 나무위키 기반) |
+| **LLM**    | Gemma-2-9b-it (로컬 추론) |
+| **임베딩** | BAAI/bge-m3 + L2 norm + MMR |
+| **벡터 DB**| Chroma (cosine, top-k + rerank + distinct) |
+| **RAW DB** | MongoDB (정제된 섹션별 JSONL 기반) |
+| **프론트** | React + Vite + GPT-style chat UI |
+| **미들웨어** | Spring Boot (OAuth2 → JWT + Redis Refresh/Blacklist) |
+| **배포** | Docker Compose (GPU 추론 포함) |
+| **튜닝 성능** | `Hit@8: 0.8421`, `dup_rate: 0.0%`, `p95 latency: 178ms` |
+
+> 스크린샷과 벤치마크는 아래에 첨부되어 있습니다 ↓
+
+## 아키텍처 개요
 ```
 [ React ] ⇄ [ Spring Security 미들웨어 (OAuth2 + JWT + Redis) ] ⇄ [ FastAPI Core (Mongo + Chroma) ] ⇄ [ LLM (Gemma-2-9b-it) ]
 ```
@@ -16,7 +32,7 @@
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 로컬 개발과 `docker-compose` 배포 환경에 맞춰 설정 파일을 분리.
 
@@ -31,7 +47,7 @@
 
 ---
 
-## 🔍 Core Projects
+## Core Projects
 
 ### License
 - Code: Apache-2.0
@@ -61,11 +77,11 @@
 
 ---
 
-## 📮 API 개요
+## API 개요
 
 이 RAG 백엔드는 **검색 기반 답변 생성**을 위한 최소 엔드포인트만 노출합니다.
 
-### 🔗 엔드포인트
+### 엔드포인트
 | Path           | Method | Description                            |
 |----------------|--------|----------------------------------------|
 | `/rag/ask`     | POST   | End-to-end RAG (retrieval → LLM)       |
@@ -73,7 +89,7 @@
 
 > 🔒 인증: `Authorization: Bearer <token>` 필요 (Spring Security 미들웨어에서 JWT 검증)
 
-### ✅ 요청/응답 예시
+### 요청/응답 예시
 요청:
 ```http
 POST /rag/ask?k=6&use_mmr=true&lam=0.5&max_tokens=512&temperature=0.2&preview_chars=600 HTTP/1.1
@@ -95,7 +111,7 @@ Content-Type: application/json
 }
 ```
 
-📁 관련 코드
+관련 코드
 ```
 app/
 └── api/
@@ -104,24 +120,24 @@ app/
 
 ---
 
-## 🖼️ Sequence Diagrams
+## Sequence Diagrams
 
-### 🔐 로그인 흐름 (OAuth2 → JWT → OTC 발급)
+### 로그인 흐름 (OAuth2 → JWT → OTC 발급)
 ![로그인](./image/auth_login_flow.png)
 
-### 🔁 API 요청 흐름 (프록시 + Redis 블랙리스트 검증)
+### API 요청 흐름 (프록시 + Redis 블랙리스트 검증)
 ![리버스프록시](./image/auth_proxy_flow.png)
 
-### 🚪 로그아웃 흐름 (Redis 블랙리스트 + Refresh 삭제)
+### 로그아웃 흐름 (Redis 블랙리스트 + Refresh 삭제)
 ![로그아웃](./image/auth_logout_flow.png)
 
-### 🔄 Ask API 전체 흐름
+### Ask API 전체 흐름
 > `/rag/ask` → 문서 검색 → LLM 응답 → JSON 반환
 ![FastAPI](./image/rag_ask_flow.png)
 
 ---
 
-## 📈 Bench (2025-09-12, retrieval-only)
+## Bench (2025-09-12, retrieval-only)
 
 조건: N=400, k=8, space=cosine, embed=BAAI/bge-m3 (L2 norm), MMR(lam=0.65), match_by=title, distinct_by=title, reranker=keep
 
@@ -144,7 +160,7 @@ app/
 
 ---
 
-## 🖥️ UI 시연 자료 (Screenshots)
+## UI 시연 자료 (Screenshots)
 
 **1) OAuth2 로그인 화면**  
 ![OAuth2 로그인](./image/oauth_login.png)
@@ -163,17 +179,17 @@ app/
 
 ---
 
-## ⚙️ Tech Highlights
-- 💡 **MMR Re-ranking**: 다양성 보장, 중복 제거
-- ✂️ **Chunking Strategy**: 한국어 종결어미/제목 기반 청킹
-- 🧪 **Benchmark Utilities**: recall@k, dup_rate, p95 등
-- 🔁 **Embeddings**: bge-m3 사용
+## Tech Highlights
+- **MMR Re-ranking**: 다양성 보장, 중복 제거
+- **Chunking Strategy**: 한국어 종결어미/제목 기반 청킹
+- **Benchmark Utilities**: recall@k, dup_rate, p95 등
+- **Embeddings**: bge-m3 사용
 
 ---
 
-## 🔭 Roadmap
+## Roadmap
 
-### ✅ Done
+### Done
 - 데이터 수집/정제: 7,700건, 하위 링크 재귀, 광고/푸터 제거, 섹션/문단 청킹, HF 공개
 - 벡터 DB & 검색: Chroma + MMR, BM25 대비 개선, Optuna 튜닝 환경
 - LLM 연동: Gemma-2-9b-it 로컬 서빙, Jinja2 프롬프트
@@ -182,18 +198,18 @@ app/
 - 프론트엔드: GPT-style 대화 UI, OAuth2 팝업 처리, Axios 헤더 자동화
 - 배포/환경: Docker Compose, GPU 추론
 
-### 🔄 In Progress
+### In Progress
 - Optuna 기반 파라미터 고도화 (`fetch_k`, `mmr_k`, `rerank_in`…)
 - RAG 품질 튜닝 및 실험 결과 문서화
 - UI 개선 (참조 문서 하이라이트 등)
 
-### 🔭 Next
+### Next
 - 사용자 검색 로그/분석
 - 로컬+클라우드 하이브리드 서빙
 - 데이터셋 확장 (ex. 픽시브 태그)
 
 ---
 
-## 📎 Links
+## Links
 - **Blog**: [기술 아키텍처 및 구현 기록](https://arin-nya.tistory.com/)
 - **Dataset**: [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
