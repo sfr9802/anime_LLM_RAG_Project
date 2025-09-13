@@ -64,9 +64,7 @@ async def ping_llm():
     provider = getattr(config, "LLM_PROVIDER", "local-http")
     if provider == "openai":
         used_model = getattr(config, "OPENAI_MODEL", os.getenv("OPENAI_MODEL", "openai-default"))
-    elif provider == "local-inproc":
-        used_model = "llama-cpp-inproc"
-    else:  # local-http
+    else:  # local-http or others
         used_model = getattr(config, "LLM_MODEL", os.getenv("LLM_MODEL", "local-model"))
 
     return {"ok": True, "provider": provider, "model": used_model, "answer": out}

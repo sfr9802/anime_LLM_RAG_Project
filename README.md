@@ -64,6 +64,47 @@
 
 ---
 
+## Reproducing Locally
+
+다음 절차를 따르면 **`namu_anime_v3.jsonl`**을 Chroma에 색인하고 벤치마크까지 재현할 수 있습니다.
+
+1. **의존성 설치**
+   ```bash
+   cd rag_demo
+   pip install -r requirements.txt
+   ```
+
+2. **데이터셋 배치**
+   ```bash
+   cd app/app/scripts
+   curl -L -o namu_anime_v3.jsonl \
+     https://huggingface.co/datasets/ArinNya/namuwiki_anime/resolve/main/namu_anime_v3.jsonl
+   ```
+
+3. **Chroma 인덱싱** (`reembed_enrich.py`)
+   ```bash
+   CHROMA_DB_DIR=./chroma_db \
+   CHROMA_COLLECTION=namu_anime_v3 \
+   DST_COLLECTION=namu_anime_v3_enriched \
+   python reembed_enrich.py
+   ```
+
+4. **성능 지표 산출** (`rag_optuna_tune_v2.py`)
+   ```bash
+   CHROMA_DB_DIR=./chroma_db \
+   CHROMA_COLLECTION=namu_anime_v3_enriched \
+   python rag_optuna_tune_v2.py
+   ```
+
+5. **서비스 기동**
+   ```bash
+   cd ../../../..
+   cp .env.local .env  # 또는 .env.docker
+   docker-compose up --build
+   ```
+
+---
+
 ## Core Projects
 
 ### License
