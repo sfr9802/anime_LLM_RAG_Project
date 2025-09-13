@@ -76,15 +76,10 @@ SUMM_MODEL     = _env("SUMM_MODEL", default="")
 # 하위호환: 'local-http' -> 'local_http'
 LLM_PROVIDER      = (_env("LLM_PROVIDER", default="local_http") or "local_http").replace("-", "_").lower()
 
-# 로컬 HTTP (llama.cpp OpenAI 호환)
+# 로컬 HTTP (OpenAI 호환)
 LLM_BASE_URL      = _env("LLM_BASE_URL", "LOCAL_LLM_BASE_URL", default="http://127.0.0.1:8000/v1")
 LLM_MODEL_ALIAS   = _env("LLM_MODEL_ALIAS", "LOCAL_LLM_MODEL", default="gemma-2-9b-it")
 LOCAL_LLM_TIMEOUT = float(_env("LOCAL_LLM_TIMEOUT", default="60"))
-
-# 로컬 in-process
-LLAMA_MODEL_PATH    = _env("LLAMA_MODEL_PATH", default=r"C:/llm/gguf/gemma-2-9b-it-Q4_K_M-fp16.gguf")
-LLAMA_CTX           = int(_env("LLAMA_CTX", default="8192"))
-LLAMA_N_GPU_LAYERS  = int(_env("LLAMA_N_GPU_LAYERS", default="-1"))
 
 # OpenAI (real)
 OPENAI_BASE_URL   = _env("OPENAI_BASE_URL", default="https://api.openai.com/v1")

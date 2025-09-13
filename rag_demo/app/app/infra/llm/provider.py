@@ -18,7 +18,7 @@ class LLMClient:
                    max_tokens: int = 512, temperature: float = 0.2) -> str:
         raise NotImplementedError
 
-# --- HTTP (OpenAI-compatible: OpenAI / vLLM / llama.cpp server) ---
+# --- HTTP (OpenAI-compatible: OpenAI / vLLM / other servers) ---
 class _OpenAIHTTPClient(LLMClient):
     def __init__(self, http: httpx.AsyncClient, *, base_url: str,
                  api_key: Optional[str], default_model: Optional[str], timeout: float = 60.0):
@@ -45,35 +45,6 @@ class _OpenAIHTTPClient(LLMClient):
         j = r.json()
         return j["choices"][0]["message"]["content"]
 
-# --- In-process (llama-cpp-python) ---
-class _InprocClient(LLMClient):
-    _llm = None
-    def __init__(self) -> None:
-        pass
-
-    @classmethod
-    def _get_llm(cls):
-        if cls._llm is None:
-            from llama_cpp import Llama
-            cls._llm = Llama(
-                model_path=getattr(config, "LLAMA_MODEL_PATH", None),
-                n_ctx=int(getattr(config, "LLAMA_CTX", 8192)),
-                n_gpu_layers=int(getattr(config, "LLAMA_N_GPU_LAYERS", 0)),
-                chat_format=str(getattr(config, "LLAMA_CHAT_FORMAT", "gemma")),
-                verbose=False,
-            )
-        return cls._llm
-
-    async def chat(self, messages: List[Dict[str, str]], *, model: Optional[str] = None,
-                   max_tokens: int = 512, temperature: float = 0.2) -> str:
-        import anyio
-        def _do():
-            out = self._get_llm().create_chat_completion(
-                messages=messages, max_tokens=max_tokens, temperature=temperature
-            )
-            return out["choices"][0]["message"]["content"]
-        return await anyio.to_thread.run_sync(_do)
-
 # --- Factory / DI helpers ---
 _http_singleton: Optional[httpx.AsyncClient] = None
 _client_singleton: Optional[LLMClient] = None
@@ -84,8 +55,6 @@ def _normalize_provider(v: Optional[str]) -> str:
     v = v.strip().lower()
     if v == "local-http":
         return "local_http"
-    if v == "local-inproc":
-        return "local_inproc"
     return v
 
 def build_client(async_http_client: httpx.AsyncClient | None = None) -> LLMClient:
@@ -100,9 +69,6 @@ def build_client(async_http_client: httpx.AsyncClient | None = None) -> LLMClien
         timeout = float(getattr(config, "LLM_TIMEOUT", 60.0) or getattr(config, "OPENAI_TIMEOUT", 60.0))
         http = async_http_client or httpx.AsyncClient(base_url=base_url, timeout=timeout)
         return _OpenAIHTTPClient(http, base_url=base_url, api_key=api_key, default_model=model, timeout=timeout)
-
-    if provider == "local_inproc":
-        return _InprocClient()
 
     raise RuntimeError(f"Unknown LLM_PROVIDER: {provider}")
 
