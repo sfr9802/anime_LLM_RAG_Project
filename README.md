@@ -5,8 +5,6 @@
 > - RawData, Vector DB, Prompt Template, Embedding Model 교체로 도메인 전환 가능  
 > - 애니메이션 문서 외에도 내부 문서, 법률, 기술 FAQ 등 다양한 활용 가능성
 
-> **Demo 스크린샷은 아래 _UI 시연 자료_ 섹션**에 배치했습니다. (빠르게 보고 싶다면 바로 스크롤 ↓)
-
 ## 요약
 
 | 항목       | 내용 |
