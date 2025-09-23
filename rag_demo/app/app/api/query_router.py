@@ -1,7 +1,7 @@
 # app/app/api/query_router.py
 from fastapi import APIRouter, Query
 from ..domain.models.query_model import QueryRequest, QueryResponse, RAGQueryResponse
-from ..services.rag import RagService
+from ..services.chroma_rag import RagService
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 

@@ -42,7 +42,7 @@ if not NO_DOTENV:
 import optuna
 
 # === project imports ===
-from app.app.services.rag import RagService
+from app.app.services.chroma_rag import RagService
 from app.app.metrics.quality import (
     keys_from_docs,
     hit_at_k,

@@ -3,6 +3,14 @@ import faiss
 import numpy as np
 from app.app.infra.mongo import mongo_client 
 from bson import ObjectId
+from dotenv import load_dotenv
+import os
+
+load_dotenv(".env.best_title", override=True)
+
+DEFAULT_TUNING = {
+    "k" = int(os.getenv("RAG_DEFUALT_K", 8)),
+}
 
 id_map = {}
 texts = []

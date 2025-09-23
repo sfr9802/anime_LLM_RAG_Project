@@ -84,7 +84,7 @@ def _search_chroma(query: str, *, where: Optional[Dict[str, Any]] = None, n: Opt
 def _search_faiss(query: str, *, top_k: int):
     # ✅ 지연 임포트: faiss가 필요할 때만 시도. 실패하면 chroma로 폴백.
     try:
-        from .faiss import get_relevant_docs as faiss_search
+        from .faiss.faiss import get_relevant_docs as faiss_search
     except Exception as e:
         log.warning("FAISS backend requested but unavailable (%s). Falling back to Chroma.", e)
         return None

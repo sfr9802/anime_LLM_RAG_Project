@@ -1,7 +1,7 @@
 # app/app/scripts/audit_ceiling.py
 from app.app.scripts.rag_optuna_tune import build_dev_rows, _recall50_raw
 from app.app.metrics.quality import keys_from_docs, recall_at_k
-from app.app.services.rag import RagService
+from app.app.services.chroma_rag import RagService
 
 def run(N=200, section="요약", by="title", k=9):
     svc = RagService()

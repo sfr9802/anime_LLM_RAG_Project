@@ -26,7 +26,7 @@ if not NO_DOTENV:
 
 import optuna  # pip install optuna
 
-from app.app.services.rag import RagService
+from app.app.services.chroma_rag import RagService
 from app.app.metrics.quality import (
     keys_from_docs, hit_at_k, recall_at_k, dup_rate, p_percentile
 )
