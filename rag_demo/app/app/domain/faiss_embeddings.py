@@ -4,7 +4,7 @@ import numpy as np
 from typing import List
 from dataclasses import dataclass
 import os
-from .utils import _normalize
+from ..utils.utils import _normalize
 
 DEVICE = os.getenv("RAG_EMBED_DEVICE", "cuda")
 
