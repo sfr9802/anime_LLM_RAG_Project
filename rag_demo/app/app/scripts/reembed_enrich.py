@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os, itertools
 from app.app.infra.vector.chroma_store import get_collection, create_collection
-from app.app.domain.embeddings import embed_passages
+from rag_demo.app.app.domain.chroma_embeddings import embed_passages
 
 SRC = os.getenv("SRC_COLLECTION", "namu_anime_v3")
 DST = os.getenv("DST_COLLECTION", "namu_anime_v3_enriched")

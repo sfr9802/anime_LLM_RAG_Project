@@ -5,7 +5,7 @@ import re, hashlib, time
 from pymongo import MongoClient, UpdateOne
 from pymongo.errors import PyMongoError
 from configure import config
-from rag_demo.app.app.domain.embeddings import embed_passages
+from rag_demo.app.app.domain.chroma_embeddings import embed_passages
 from infra.vector.chroma_store import upsert
 
 _ws = re.compile(r"\s+")

@@ -14,7 +14,7 @@ from chromadb.config import Settings
 # 프로젝트 설정
 import app.app.configure.config as config
 # 프로젝트 임베딩 빌더(Chroma 호환 객체 반환: name/embed_documents/embed_query 권장)
-from app.app.domain.embeddings import build_embedding_fn
+from rag_demo.app.app.domain.chroma_embeddings import build_embedding_fn
 
 log = logging.getLogger("chroma_store")
 

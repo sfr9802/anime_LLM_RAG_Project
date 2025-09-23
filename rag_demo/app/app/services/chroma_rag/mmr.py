@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import numpy as np
 import torch
 
-from app.app.domain.embeddings import embed_queries, embed_passages
+from rag_demo.app.app.domain.chroma_embeddings import embed_queries, embed_passages
 
 
 def _mmr(q: str, items: List[Dict[str, Any]], k: int, lam: float = 0.5) -> List[Dict[str, Any]]:

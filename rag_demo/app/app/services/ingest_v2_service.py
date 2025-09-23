@@ -6,7 +6,7 @@ from pymongo import UpdateOne
 from pymongo.errors import PyMongoError
 
 from ..configure import config
-from ..domain.embeddings import embed_passages  # 반환: np.ndarray 또는 list 지원 권장
+from ..domain.chroma_embeddings import embed_passages  # 반환: np.ndarray 또는 list 지원 권장
 from ..infra.vector.chroma_store import upsert as chroma_upsert
 from ..infra.mongo.mongo_client import get_db  # db = get_db()
 
