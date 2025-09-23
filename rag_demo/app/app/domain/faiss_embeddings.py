@@ -36,8 +36,9 @@ class FaissEmbedder:
         
         for i in range(0, len(docs), batch_size):
             batch = docs[i : i + batch_size]
-            embed = self.model.encode(batch)
-            dense_vecs = np.array(embed["dense_vecs"])
+            texts = [d.text for d in batch]
+            embed = self.model.encode(texts) 
+            dense_vecs = np.array(embed["dense_vecs"], dtype="float32")
             dense_vecs = _normalize(dense_vecs)
 
             for j, (doc, vec) in enumerate(zip(batch, dense_vecs)) :
@@ -46,7 +47,8 @@ class FaissEmbedder:
                     result.append((f"doc_{doc_id}", vec)) 
                 else :
                     result.append((doc.id, vec))
-
+        return result
+    
     def embed_query(self, query: str) -> np.ndarray:
         embed = self.model.encode([query], is_query=True)
         dense = np.array(embed["dense_vecs"], dtype="float32")
