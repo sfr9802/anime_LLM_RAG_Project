@@ -27,12 +27,28 @@ class FaissEmbedder:
         model = BGEM3FlagModel(name, use_fp16=DEVICE)
         return model
 
-    def embed_documents(self, docs: List[SimpleDocument]) -> np.ndarray:
-        embed = self.model.encode(docs, batch_size= 1024)
-        dense = np.array(embed["dense_vecs"], dtype="float32")
-        return _normalize(dense)
+    def embed_documents(
+        self,
+        docs: List[SimpleDocument],
+        batch_size: int= 64
+    ) -> List[tuple[str, np.ndarray]]:
+        result : List[tuple[str, np.ndarray]] = []
+        
+        for i in range(0, len(docs), batch_size):
+            batch = docs[i : i + batch_size]
+            embed = self.model.encode(batch)
+            dense_vecs = np.array(embed["dense_vecs"])
+            dense_vecs = _normalize(dense_vecs)
+
+            for j, (doc, vec) in enumerate(zip(batch, dense_vecs)) :
+                doc_id = i+j
+                if doc.id == None :
+                    result.append((f"doc_{doc_id}", vec)) 
+                else :
+                    result.append((doc.id, vec))
 
     def embed_query(self, query: str) -> np.ndarray:
+        embed = self.model.encode([query], is_query=True)
+        dense = np.array(embed["dense_vecs"], dtype="float32")
+        return _normalize(dense)[0]
         
-        
-        pass
