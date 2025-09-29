@@ -53,11 +53,11 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 
 ```mermaid
 flowchart LR
-    UI[React] --> SPRING[Spring Security<br/>(OAuth2 + JWT)]
+    UI[React] --> SPRING[Spring Security (JWT)]
     SPRING --> Redis[(Redis)]
-    SPRING --> FASTAPI[FastAPI Core<br/>(RAG API)]
+    SPRING --> FASTAPI[FastAPI Core]
     FASTAPI --> Mongo[(MongoDB)]
-    FASTAPI --> Chroma[(Chroma DB)]
+    FASTAPI --> Chroma[(Chroma)]
     FASTAPI --> LLM[Gemma-2-9b-it]
 ```
 
