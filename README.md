@@ -102,11 +102,76 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
    ```
 
 4. **성능 지표 산출** (`rag_optuna_tune_v2.py`)
-   ```bash
-   CHROMA_DB_DIR=./chroma_db \
-   CHROMA_COLLECTION=namu_anime_v3_enriched \
-   python rag_optuna_tune_v2.py
-   ```
+
+  ```bash
+  CHROMA_DB_DIR=./chroma_db \
+  CHROMA_COLLECTION=namu_anime_v3_enriched \
+  python rag_optuna_tune_v2.py --help
+  ```
+
+  > `--help` 옵션으로 인자 설명을 먼저 확인할 수 있습니다.  
+  > 아래는 실제 Optuna 기반 파라미터 튜닝 실행 예시입니다:
+
+  <details>
+  <summary><strong>[Optuna 튜닝 실행 커맨드 예시]</strong></summary>
+
+  ```bash
+  CHROMA_DB_DIR=./chroma_db \
+  CHROMA_COLLECTION=namu_anime_v3_enriched \
+  python -m app.app.scripts.rag_optuna_tune_v2 \
+    --N 1200 \
+    --xval 5 \
+    --section '요약' \
+    --by title \
+    --distinct-by title \
+    --trials 80 \
+    --strategies both \
+    --force-mmr-on \
+    --restrict-sweetspot \
+    --k-choices 6,8,9 \
+    --lam-choices 0.60,0.65,0.70 \
+    --pre-k-range 120:200:10 \
+    --mmr-k-range 40:96:8 \
+    --fetch-k-range 100:200:20 \
+    --fetch-k-aux-range 60:160:20 \
+    --rerank-in-range 16:40:4 \
+    --title-cap-choices 1,2 \
+    --outdir tune_out_v3_title \
+    --study v3_title \
+    --devcache-save tune_out_v3_title/devset.title.json
+  ```
+
+  </details>
+
+  <details>
+  <summary><strong>[Optuna 튜닝 실행 커맨드 파라미터 설명]</strong></summary>
+
+  ### 주요 파라미터 설명
+
+  | 파라미터 | 설명 |
+  |----------|------|
+  | `--N` | 전체 평가 쿼리 수 (샘플링 수) |
+  | `--xval` | K-Fold 교차 검증 분할 수 |
+  | `--section` | 문서 내 평가 대상 섹션 (예: 요약, 본문 등) |
+  | `--by` | 평가 기준 (ex: title 기준으로 묶음) |
+  | `--distinct-by` | 중복 제거 기준 (title 단위로 중복 제거) |
+  | `--trials` | Optuna 탐색 횟수 |
+  | `--strategies` | 탐색 전략 (`base`, `mmr`, `both`) |
+  | `--force-mmr-on` | MMR 강제 활성화 |
+  | `--restrict-sweetspot` | MMR 최적 탐색 영역 제한 |
+  | `--k-choices` | Top-K 후보 수 리스트 |
+  | `--lam-choices` | MMR Lambda 후보값 리스트 |
+  | `--pre-k-range` | Pre-filter 후보 수 범위 |
+  | `--mmr-k-range` | MMR 적용 후보 수 범위 |
+  | `--fetch-k-range` | 초기 검색 후보 수 범위 |
+  | `--fetch-k-aux-range` | 보조 검색 후보 수 범위 |
+  | `--rerank-in-range` | Rerank 입력 수 범위 |
+  | `--title-cap-choices` | 제목 축약 길이 제한 후보값 |
+  | `--outdir` | 결과 저장 디렉토리 |
+  | `--study` | Optuna 스터디 이름 |
+  | `--devcache-save` | 평가 쿼리 캐시 저장 경로 |
+
+  </details>
 
 5. **서비스 기동**
    ```bash
