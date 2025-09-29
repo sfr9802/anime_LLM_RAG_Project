@@ -158,6 +158,10 @@ k=8, N=400, distinct_by="title", reranker=keep
 | **p95 latency**      | 178.29ms | `/rag/ask` 기준: 검색 모듈만 측정        |
 
 
+**[Benchmark A vs B 비교 그래프]**
+![ab_chart](./image/ab_comparison.png)
+
+
 **환경**: Ryzen 7 9800X3D / 64GB RAM / RTX 5080 (VRAM 16GB)  
 ※ 로컬 측정값. 클라우드/프로덕션과 다를 수 있음.
 
