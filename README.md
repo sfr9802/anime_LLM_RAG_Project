@@ -233,18 +233,26 @@ app/
 
 ## Sequence Diagrams
 
-### 로그인 흐름 (OAuth2 → JWT → OTC 발급)
-![로그인](./image/auth_login_flow.png)
-
-### API 요청 흐름 (프록시 + Redis 블랙리스트 검증)
+### API 요청 흐름 (프록시 + Redis 블랙리스트 검증)  
 ![리버스프록시](./image/auth_proxy_flow.png)
 
-### 로그아웃 흐름 (Redis 블랙리스트 + Refresh 삭제)
+### Ask API 전체 흐름  
+> `/rag/ask` → 문서 검색 → LLM 응답 → JSON 반환  
+![FastAPI](./image/rag_ask_flow.png)
+
+<details>
+<summary>🔐 인증 흐름 (로그인 / 로그아웃)</summary>
+
+### 로그인 흐름 (OAuth2 → JWT → OTC 발급)  
+![로그인](./image/auth_login_flow.png)
+
+### 로그아웃 흐름 (Redis 블랙리스트 + Refresh 삭제)  
 ![로그아웃](./image/auth_logout_flow.png)
 
-### Ask API 전체 흐름
-> `/rag/ask` → 문서 검색 → LLM 응답 → JSON 반환
-![FastAPI](./image/rag_ask_flow.png)
+</details>
+
+
+
 
 ---
 
