@@ -1,5 +1,6 @@
 # Anime RAG Stack — Full Pipeline Portfolio
 
+
 도메인 특화 **Retrieval-Augmented Generation (RAG)** 백엔드 (애니메이션 문서 기반).  
 데이터 크롤링 → 벡터 DB 튜닝 → 프롬프트 설계 → 보안 API까지 **엔드-투-엔드**로 구현.  
 
@@ -7,6 +8,7 @@
 > - 애니메이션 문서 외에도 내부 문서, 법률, 기술 FAQ 등 다양한 활용 가능성
 
 ---
+
 
 ## 요약
 
@@ -43,6 +45,7 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 > GPT의 코드 제안 기능을 보조로 활용했으며, **데이터 설계, 구조 아키텍처, 프롬프트 전략, 성능 튜닝 실험은 직접 주도**했습니다.
 
 
+---
 
 
 ## 아키텍처 개요
@@ -52,7 +55,9 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 - 엔드투엔드 플로우: 질의(Query) → 임베딩 → 검색(Retrieval) → MMR → 재랭킹 → 프롬프트 → LLM 응답  
 - **Docker Compose** 기반으로 로컬 개발, GPU 추론, 모듈형 오케스트레이션 지원.
 
+
 ---
+
 
 ## Configuration
 
@@ -67,7 +72,9 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 
 구글 GCP의 OAuth2 id/key pair 필요합니다.
 
+
 ---
+
 
 ## Reproducing Locally
 
@@ -108,19 +115,24 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
    docker-compose up --build
    ```
 
+
 ---
 
+
 ## Core Projects
+
 
 ### License
 - Code: Apache-2.0
 - Dataset: CC BY-NC-SA 2.0 KR (separate license). Non-commercial; ShareAlike.
+
 
 ### 1) RAG Backend API (2025)
 > FastAPI 기반 모듈화된 RAG 백엔드. 검색/재랭킹/응답 생성을 지원.
 
 - `/rag/ask`: 검색 기반 LLM 응답 생성
 - `/rag/healthz`: 서비스 헬스체크
+
 
 ### 2) NamuWiki Crawler & Cleaner
 > 나무위키 기반 대규모 문서 수집 및 전처리 → RAG 최적화 JSONL 생성.
@@ -130,6 +142,7 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 - 공개: Hugging Face 데이터셋 → [NamuWiki Anime RAG Dataset](https://huggingface.co/datasets/ArinNya/namuwiki_anime)
 - 라이선스: 원본 `CC BY-NC-SA 2.0 KR` (비상업적, 동일조건변경허락)
 
+
 ### 3) Spring Security Middleware
 > React ⇄ FastAPI 사이 인증 및 프록시 담당
 
@@ -138,7 +151,9 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 - `@AuthenticationPrincipal` 타입 분리 (OAuth2 vs JWT)
 - React에서 받은 토큰을 Axios global header에 설정
 
+
 ---
+
 
 ## Bench (2025-09-12, retrieval-only)
 
@@ -169,7 +184,9 @@ k=8, N=400, distinct_by="title", reranker=keep
 
 ※ 본 수치는 by=title + distinct_by=title 평가축 결과입니다. by=doc/seed로 바꾸면 절대값은 낮아집니다.
 
+
 ---
+
 
 ## API 개요
 
