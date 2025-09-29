@@ -50,11 +50,35 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 
 
 ## 아키텍처 개요
-```
-[ React ] ⇄ [ Spring Security 미들웨어 (OAuth2 + JWT + Redis) ] ⇄ [ FastAPI Core (Mongo + Chroma) ] ⇄ [ LLM (Gemma-2-9b-it) ]
-```
+
+```mermaid
+flowchart LR
+    UI[React] --> SPRING[Spring Security]
+    SPRING -->|OAuth2 Login| Redis[(Redis)]
+    SPRING --> FASTAPI[FastAPI RAG Core]
+    FASTAPI --> Mongo[(MongoDB)]
+    FASTAPI --> Chroma[(Chroma DB)]
+    FASTAPI --> LLM[Gemma-2-9b-it]
+
 - 엔드투엔드 플로우: 질의(Query) → 임베딩 → 검색(Retrieval) → MMR → 재랭킹 → 프롬프트 → LLM 응답  
 - **Docker Compose** 기반으로 로컬 개발, GPU 추론, 모듈형 오케스트레이션 지원.
+
+## 📦 기술 스택 구성
+
+| 구성 요소         | 기술                          | 역할 및 선택 이유 |
+|------------------|-------------------------------|-------------------|
+| **Frontend**     | React, Vite, Chart.js         | 대화형 RAG UI 구성, OAuth2 팝업 방식 구현, 테마/시각화 유연성 확보 |
+| **Middleware**   | Spring Security, JWT, Redis   | 인증 게이트웨이 분리 목적, OAuth2 + JWT 인증 흐름 구축, Redis 기반 토큰 블랙리스트 처리 (Spring Security는 실무 검증된 표준) |
+| **Backend Core** | FastAPI, Pydantic             | 검색/재랭킹/LLM 응답 처리, 경량 구조로 LLM 서빙과의 연동에 최적화됨 (빠른 라우팅/모듈 구성 유리) |
+| **Vector DB**    | Chroma                        | 파일 기반 스토리지 사용 가능, 로컬 환경에 적합하며 가볍고 빠른 벡터 검색 가능 (cosine + MMR 적용) |
+| **Embedding**    | BAAI/bge-m3                   | 다국어에 강한 모델, 한국어 표현력을 유지하면서 문서-질문 임베딩 품질 확보 (L2 정규화 포함) |
+| **LLM**          | Gemma-2-9b-it (gguf)          | 로컬 GPU 기반 추론 가능한 LLM, 보안·비용 측면에서 로컬 서빙 적합 |
+| **Data Store**   | MongoDB                       | 청크 및 메타데이터 유연한 저장용 (JSONL 기반 문서구조와 자연스럽게 매핑) |
+| **Orchestration**| Docker Compose                | 각 컴포넌트의 환경 분리 및 통합 실행 자동화 (로컬 GPU 개발에 적합) |
+| **Benchmark**    | Optuna, matplotlib            | Retrieval 품질 튜닝 (fetch_k, mmr_k 등) 및 실험 시각화 |
+| **Dataset**      | NamuWiki Anime JSONL (v3)     | 크롤링·정제 기반 도메인 특화 문서 집합 (2006~2025년 애니메이션 기준) |
+
+
 
 
 ---
