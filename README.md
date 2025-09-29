@@ -53,12 +53,13 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 
 ```mermaid
 flowchart LR
-    UI[React] --> SPRING[Spring Security]
-    SPRING -->|OAuth2 Login| Redis[(Redis)]
-    SPRING --> FASTAPI[FastAPI RAG Core]
+    UI[React] --> SPRING[Spring Security<br/>(OAuth2 + JWT)]
+    SPRING --> Redis[(Redis)]
+    SPRING --> FASTAPI[FastAPI Core<br/>(RAG API)]
     FASTAPI --> Mongo[(MongoDB)]
     FASTAPI --> Chroma[(Chroma DB)]
     FASTAPI --> LLM[Gemma-2-9b-it]
+```
 
 - 엔드투엔드 플로우: 질의(Query) → 임베딩 → 검색(Retrieval) → MMR → 재랭킹 → 프롬프트 → LLM 응답  
 - **Docker Compose** 기반으로 로컬 개발, GPU 추론, 모듈형 오케스트레이션 지원.
