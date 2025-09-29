@@ -271,7 +271,14 @@ k=8, N=400, distinct_by="title", reranker=keep
 ### 요청/응답 예시
 요청:
 ```http
-POST /rag/ask?k=6&use_mmr=true&lam=0.5&max_tokens=512&temperature=0.2&preview_chars=600 HTTP/1.1
+POST /rag/ask?
+  k=6&
+  use_mmr=true&
+  lam=0.5&
+  max_tokens=512&
+  temperature=0.2&
+  preview_chars=600
+HTTP/1.1
 Authorization: Bearer ACCESS
 Content-Type: application/json
 
