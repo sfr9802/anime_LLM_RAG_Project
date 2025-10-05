@@ -1,9 +1,15 @@
 plugins {
 	id 'java'
-	id 'war'
 	id 'org.springframework.boot' version '3.5.4'
 	id 'io.spring.dependency-management' version '1.1.7'
+	// id 'war'  // ❌ 빼
 }
+
+bootJar {
+	enabled = true
+	archiveFileName = 'app.jar'
+}
+jar { enabled = false }
 
 group = 'com.arin'
 version = '0.0.1-SNAPSHOT'
@@ -51,7 +57,7 @@ dependencies {
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
 	// 외부 WAS에 배포할 WAR이면 톰캣을 제공 의존성으로
-	providedRuntime 'org.springframework.boot:spring-boot-starter-tomcat'
+//	providedRuntime 'org.springframework.boot:spring-boot-starter-tomcat'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.security:spring-security-test'
@@ -61,5 +67,5 @@ dependencies {
 tasks.named('test') { useJUnitPlatform() }
 
 // WAR 패키징 명확화
-bootJar { enabled = false }
-bootWar { enabled = true }
+//bootJar { enabled = false }
+//bootWar { enabled = true }

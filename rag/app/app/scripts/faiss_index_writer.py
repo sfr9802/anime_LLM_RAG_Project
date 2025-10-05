@@ -7,7 +7,7 @@ from typing import List
 
 
 def load_raw_documents(input_path: str) -> List[SimpleDocument]:
-    
+    # TODO: JSONL 등에서 SimpleDocument 리스트로 로드
     pass
 
 def build_index(
@@ -17,7 +17,7 @@ def build_index(
     docs_path: str,
     model_name: str,
 ):
-    
+    # TODO: 임베딩 + 벡터스토어 추가 + 저장
     pass
 
 def main():
