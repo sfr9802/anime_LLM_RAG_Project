@@ -1,7 +1,7 @@
-# Anime RAG Stack — Full Pipeline Portfolio
+# RAG Stack — Full Pipeline Portfolio
 
 
-도메인 특화 **Retrieval-Augmented Generation (RAG)** 백엔드 (애니메이션 문서 기반).  
+도메인 특화 **Retrieval-Augmented Generation (RAG)** 백엔드  
 데이터 크롤링 → 벡터 DB 튜닝 → 프롬프트 설계 → 보안 API까지 **엔드-투-엔드**로 구현.  
 
 > - RawData, Vector DB, Prompt Template, Embedding Model 교체로 도메인 전환 가능  
