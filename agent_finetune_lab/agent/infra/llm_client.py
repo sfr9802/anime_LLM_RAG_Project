@@ -1,7 +1,7 @@
 import httpx
 from typing import List
-from ..src.agent.types import Message
-from ..src.agent.config import Settings
+from src.agent.types import Message
+from config import Settings
 
 def _endpoint(base_url: str) -> str:
     b = base_url.rstrip("/")
@@ -14,7 +14,7 @@ class LLMClient:
         self.path = _endpoint(cfg.llm_base_url)
         self.headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if cfg.llm_api_key:
-            self.headers["Authorization"] = f"Bearer {cfg.llm_api_key}"
+            self.headers["Authorization"] = f"Bearer {cfg.llm_api_key}"  # 필요 시
 
     async def ask(self, messages: List[Message], temperature: float, max_tokens: int) -> str:
         payload = {
@@ -27,5 +27,5 @@ class LLMClient:
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
 
-    async def aclose(self):  # TODO: 종료 훅에서 호출(필요시)
+    async def aclose(self):  # TODO: 앱 종료 훅에서 호출
         await self.cli.aclose()
