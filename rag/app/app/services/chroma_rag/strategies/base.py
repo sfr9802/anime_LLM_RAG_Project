@@ -27,54 +27,37 @@ class RetrievalStrategy:
             out.append(it)
         return out
 
-    def _rerank(
-        self,
-        reranker_model,
-        query: str,
-        candidates: List[Dict[str, Any]],
-        top_k: int,
-        score_field: str = "ce_score"
-    ) -> List[Dict[str, Any]]:
+    def _rerank(self, service, q: str, items: List[Dict[str, Any]], k: int) -> List[Dict[str, Any]]:
         """
-        CrossEncoder를 이용해 후보 문서를 재정렬하고 상위 top_k개를 반환합니다.
-
-        :param reranker_model: SentenceTransformer 등 CrossEncoder 모델
-        :param query: 사용자 질문
-        :param candidates: 문서 리스트 (dict)
-        :param top_k: 상위 몇 개까지 선택할지
-        :param score_field: 점수를 저장할 필드명 (기본: 'ce_score')
-        :return: 재정렬된 상위 문서 리스트
+        CrossEncoder reranker가 설정되어 있을 경우, 입력 문서들을 재정렬하여 상위 k개를 반환합니다.
         """
-        if not reranker_model or not candidates:
-            return candidates[:top_k]
 
-        # (query, 문서) 쌍 생성
-        query_passage_pairs = [
-            (query, (doc.get("text") or "")[:800])
-            for doc in candidates
+        reranker = service._reranker
+        if not reranker or not items:
+            return items[:k]
+
+        # (질문, 문서) 쌍 생성 (문서는 최대 800자까지 잘라서 사용)
+        query_doc_pairs = [
+            (q, (doc.get("text") or "")[:800])
+            for doc in items
         ]
 
-        # 배치 사이즈 설정
         batch_size = int(os.getenv("RAG_RERANK_BATCH", "64"))
 
-        # CrossEncoder로 점수 예측
-        relevance_scores = reranker_model.predict(
-            query_passage_pairs,
+        # CrossEncoder로 유사도 예측
+        relevance_scores = reranker.predict(
+            query_doc_pairs,
             batch_size=batch_size,
             convert_to_numpy=True
         )
 
-        # 각 문서에 점수 부여
-        for doc, score in zip(candidates, relevance_scores):
-            doc[score_field] = float(score)
+        # 각 문서에 점수 추가
+        for doc, score in zip(items, relevance_scores):
+            doc["_ce"] = float(score)
 
-        # 점수 기준으로 정렬 후 상위 top_k 반환
-        sorted_docs = sorted(
-            candidates,
-            key=lambda d: d.get(score_field, 0.0),
-            reverse=True
-        )
-        return sorted_docs[:top_k]
+        # 점수 기준 내림차순 정렬 후 상위 k개 선택
+        sorted_items = sorted(items, key=lambda d: d.get("_ce", 0.0), reverse=True)
+        return sorted_items[:k]
 
 
     # main API ----------------------------------------------------------------
