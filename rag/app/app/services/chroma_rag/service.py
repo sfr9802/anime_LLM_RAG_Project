@@ -146,17 +146,11 @@ class RagService:
             chunks.append(piece)
             total += len(piece)
         return "\n\n".join(chunks)
-
+ 
     def _render_prompt(self, question: str, context: str) -> str:
-        return (
-            "규칙:\n"
-            "1) 아래 <컨텍스트>만 근거로 한국어로 간결히 답하라.\n"
-            "2) 문장 끝에 [S#] 표기로 근거 조각을 1~2개 인용하라.\n"
-            "3) 컨텍스트에 없으면 '모르겠다'고 답하라. 추측 금지.\n"
-            "4) 수치/고유명사는 컨텍스트 표기 그대로 사용.\n\n"
-            f"<컨텍스트>\n{context}\n\n"
-            f"<질문>\n{question}\n"
-        )
+        from ...prompt.loader import render_template
+        return render_template("rag_prompt", question=question, context=context)
+
 
     # public -------------------------------------------------------------------
     async def ask(
