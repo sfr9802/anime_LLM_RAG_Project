@@ -1,7 +1,7 @@
 from config import Settings
 from infra.llm_client import LLMClient
 from .memory import ConversationMemory
-from .tools import ToolRegistry, default_registry
+from .toolkit import ToolRegistry, default_registry
 from .policy import SYSTEM_PROMPT, parse_reply, should_stop
 
 class Agent:
