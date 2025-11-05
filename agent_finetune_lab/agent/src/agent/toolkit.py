@@ -1,5 +1,7 @@
 from typing import Dict, Any, Callable
 from .types import ToolCall, ToolResult
+from tools.calculator import Calculator
+from tools.hello_echo import HelloEcho
 
 ToolFn = Callable[[Dict[str, Any]], ToolResult]
 
@@ -14,5 +16,15 @@ class ToolRegistry:
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    # TODO: 실제 툴 등록 (예: reg.register("search", search_fn))
+
+    # 툴 인스턴스 생성
+    calc = Calculator()
+    hello = HelloEcho()
+
+    # 툴 등록
+    reg.register("calculator", calc.calculator_tool)
+    reg.register("hello", hello.hello_tool)
+    reg.register("echo", hello.echo_tool)
+
     return reg
+
