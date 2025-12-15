@@ -21,7 +21,6 @@
 > - [Sequence Diagrams](#sequence-diagrams)
 > - [UI 시연 자료 (Screenshots)](#ui-시연-자료-screenshots)
 > - [Tech Highlights](#tech-highlights)
-> - [Roadmap](#roadmap)
 > - [Links](#links)
 
 --- 
@@ -389,31 +388,6 @@ app/
 - **Chunking Strategy**: 한국어 종결어미/제목 기반 청킹
 - **Benchmark Utilities**: recall@k, dup_rate, p95 등
 - **Embeddings**: bge-m3 사용
-
----
-
-## Roadmap
-
-### Done
-- 데이터 수집/정제: 7,700건, 하위 링크 재귀, 광고/푸터 제거, 섹션/문단 청킹, HF 공개
-- 벡터 DB & 검색: Chroma + MMR, BM25 대비 개선, Optuna 튜닝 환경
-- LLM 연동: Gemma-2-9b-it 로컬 서빙, Jinja2 프롬프트
-- 백엔드: FastAPI `/rag/ask`, `/rag/healthz`, 품질/성능 지표 유틸
-- 미들웨어 & 인증: OAuth2 → JWT, Redis Refresh/Blacklist, React↔Spring↔FastAPI 프록시
-- 프론트엔드: GPT-style 대화 UI, OAuth2 팝업 처리, Axios 헤더 자동화
-- 배포/환경: Docker Compose, GPU 추론
-
-### In Progress
-- Optuna 기반 파라미터 고도화 (`fetch_k`, `mmr_k`, `rerank_in`…)
-- RAG 품질 튜닝 및 실험 결과 문서화
-- UI 개선 (참조 문서 하이라이트 등)
-
-### Planned
-- 사용자 검색 로그/분석
-- 로컬+클라우드 하이브리드 서빙
-- 데이터셋 확장 (ex. 픽시브 태그)
-- Chorma - Faiss 비교
-- 소스코드 리팩토링
 
 ---
 
