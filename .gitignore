@@ -50,7 +50,7 @@ jacoco*.exec
 
 # === Custom: Ignore data files ===
 *.json
-*.csv
+#*.csv
 *.jsonl
 
 # === Node (if frontend included) ===

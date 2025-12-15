@@ -1,0 +1,2 @@
+trial,score,strategy,k,use_mmr,lam,candidate_k,p95,recall@k,mrr,ndcg,dup,recall50_raw,RAG_TITLE_CAP,RAG_MMR_PRE_K,RAG_MMR_K,RAG_RERANK_IN,RAG_FETCH_K,RAG_FETCH_K_AUX
+0,0.595050,chroma_only,9,True,0.9,,195.4535999975633,0.62,0.59,0.6030291919347597,0.1555555555555559,0.5825,1,120,48,26,120,110
