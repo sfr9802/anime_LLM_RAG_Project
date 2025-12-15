@@ -1,4 +1,4 @@
-# RAG Stack — Full Pipeline Portfolio
+# RAG Full Pipeline Proejct
 
 
 도메인 특화 **Retrieval-Augmented Generation (RAG)** 백엔드  
