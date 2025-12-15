@@ -56,13 +56,7 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
   - RawData, Vector DB, Prompt Template, Embedding Model 교체만으로 전환 가능  
   - 법률 문서, 기술 FAQ, 사내 위키 등 다양한 분야로 확장 가능
 
-> 전체 아키텍처, UI, 성능 지표는 아래 섹션 또는 [기술 블로그 포스트(LLM + RAG 프로젝트 [2] 아키텍쳐 설계)](https://arin-nya.tistory.com/145)에서 자세히 다룹니다.
-> 코드 구현에는 GPT의 제안 기능을 참고하되,  
-**데이터 구조 설계, 프롬프트 전략, 성능 튜닝 실험은 전부 직접 주도했습니다.**
-
-
 ---
-
 
 ## 아키텍처 개요
 
@@ -85,7 +79,7 @@ LLM 단독 사용 시 **비주류 애니메이션이나 세부 설정에 대해 
 | **Data Store**   | MongoDB                       | 청크 및 메타데이터 유연한 저장용 (JSONL 기반 문서구조와 자연스럽게 매핑) |
 | **Orchestration**| Docker Compose                | 각 컴포넌트의 환경 분리 및 통합 실행 자동화 (로컬 GPU 개발에 적합) |
 | **Benchmark**    | Optuna, matplotlib            | Retrieval 품질 튜닝 (fetch_k, mmr_k 등) 및 실험 시각화 |
-| **Dataset**      | NamuWiki Anime JSONL (v3)     | 크롤링·정제 기반 도메인 특화 문서 집합 (2006~2025년 애니메이션 기준) |
+| **Dataset**      | NamuWiki Anime JSONL (v3)     | 크롤링·정제 기반 도메인 특화 문서 집합 (2006~2025년 1분기 애니메이션 기준) |
 
 
 
