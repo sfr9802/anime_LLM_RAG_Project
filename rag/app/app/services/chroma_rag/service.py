@@ -3,11 +3,7 @@ from __future__ import annotations
 """Main RAG service orchestrating retrieval and answer generation."""
 
 from typing import Any, Dict, List, Optional, Tuple, overload
-import json
-import logging
 import os
-import random
-import re
 import time
 
 import numpy as np
@@ -28,31 +24,15 @@ except Exception:  # pragma: no cover
     from app.app.domain.models.document_model import DocumentItem
     from app.app.domain.models.query_model import RAGQueryResponse
 
-from .utils import _env_float, _env_int
+from .utils import _env_float
 from .expand import _expand_same_doc, _quota_by_section
 from .retrieval import retrieve_docs as _retrieve_docs
-
-try:
-    from app.app.metrics.quality import dup_rate, keys_from_docs
-except Exception:  # pragma: no cover
-    def dup_rate(keys_topk: List[str]) -> float:
-        k = len(keys_topk)
-        return 0.0 if k <= 1 else 1.0 - (len(set(keys_topk)) / float(k))
-
-    def keys_from_docs(docs: List[Dict], by: str = "doc") -> List[str]:
-        out: List[str] = []
-        for d in docs:
-            m = (d.get("metadata") or {})
-            if by == "doc":
-                out.append(m.get("doc_id") or "")
-            else:
-                out.append(m.get("seed_title") or m.get("parent") or m.get("title") or "")
-        return out
+from .parser import QueryParser
+from . import metrics as rag_metrics
 
 
 _RERANKER_SINGLETON = None
 _RERANKER_DEVICE = None
-_LOG = logging.getLogger("rag.query_parse")
 
 
 class RagService:
@@ -61,6 +41,7 @@ class RagService:
     def __init__(self, force_reranker: Optional[bool] = None):
         self.chat = get_chat()
         self._last_space: str = "cosine"
+        self._parser = QueryParser(self.chat)
 
         want = bool(int(os.getenv("RAG_USE_RERANK", "1")))
         if force_reranker is not None:
@@ -161,67 +142,19 @@ class RagService:
         return render_template("rag_prompt", question=question, context=context)
 
     # query parsing -------------------------------------------------------------
-    def _parse_query_regex(self, q: str) -> str:
-        # 최소 클린징: 인용부호류 제거 + 공백 정리
-        cleaned = re.sub(r"[\"'`]+", "", q or "")
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        return cleaned or q
+    @overload
+    async def parse_query(self, q: str, *, with_mode: bool = False) -> str:
+        ...
 
-    async def _parse_query_llm(self, q: str) -> str:
-        from ...prompt.loader import render_template
+    @overload
+    async def parse_query(self, q: str, *, with_mode: bool = True) -> Tuple[str, str]:
+        ...
 
-        prompt = render_template("query_parse_prompt", user_query=q)
-        max_tokens = _env_int("RAG_QUERY_PARSE_MAX_TOKENS", 120)
-        temperature = _env_float("RAG_QUERY_PARSE_TEMPERATURE", 0.0)
-
-        try:
-            out = await self.chat(
-                [{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        except Exception:
-            _LOG.exception("Query parse failed; falling back to original query.")
-            return q
-
-        raw = (out or "").strip()
-        if not raw:
-            _LOG.info("Query parse returned empty output; falling back.")
-            return q
-
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            left = raw.find("{")
-            right = raw.rfind("}")
-            if left < 0 or right < 0 or right <= left:
-                _LOG.info("Query parse returned non-JSON output; falling back.")
-                return q
-            try:
-                data = json.loads(raw[left : right + 1])
-            except json.JSONDecodeError:
-                _LOG.info("Query parse returned invalid JSON; falling back.")
-                return q
-
-        parsed = (data.get("query") or "").strip()
-        if parsed:
-            _LOG.info("Query parsed: original=%s parsed=%s", q, parsed)
-        else:
-            _LOG.info("Query parse produced empty query; falling back.")
-        return parsed or q
-
-    def _query_parser_mode(self) -> str:
-        return (os.getenv("RAG_QUERY_PARSER", "regex") or "regex").strip().lower()
-
-    async def _parse_query(self, q: str) -> Tuple[str, str]:
-        """
-        Returns: (parsed_query, mode_used)
-        mode_used is one of: "llm", "regex"
-        """
-        mode = self._query_parser_mode()
-        if mode == "llm":
-            return await self._parse_query_llm(q), "llm"
-        return self._parse_query_regex(q), "regex"
+    async def parse_query(self, q: str, *, with_mode: bool = False) -> str | Tuple[str, str]:
+        parsed, mode = await self._parser.parse(q)
+        if with_mode:
+            return parsed, mode
+        return parsed
 
     @overload
     async def parse_query(self, q: str, *, with_mode: bool = False) -> str:
@@ -246,126 +179,6 @@ class RagService:
     def _device_name(self) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
 
-    def _base_metrics(
-        self,
-        *,
-        k: int,
-        strategy: str,
-        use_reranker: bool,
-        retriever_ms: float,
-        expand_ms: float,
-        llm_ms: float,
-        total_ms: float,
-        conf: float,
-        docs: List[Dict[str, Any]],
-        parser_mode: str,
-        parsed_query: str,
-    ) -> Dict[str, Any]:
-        return {
-            "k": k,
-            "strategy": strategy,
-            "use_reranker": use_reranker,
-            "retriever_ms": round(retriever_ms, 1),
-            "expand_ms": round(expand_ms, 1),
-            "llm_ms": round(llm_ms, 1),
-            "total_ms": round(total_ms, 1),
-            "conf": round(conf, 4),
-            "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
-            "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-            "device": self._device_name(),
-            "retrieved": len(docs),
-            "query_parser": parser_mode,
-            "parsed_query": parsed_query,
-        }
-
-    def _eval_query_metrics(
-        self,
-        q: str,
-        *,
-        k: int,
-        where: Optional[Dict[str, Any]],
-        candidate_k: Optional[int],
-        use_mmr: bool,
-        lam: float,
-        strategy: str,
-    ) -> Dict[str, Any]:
-        docs = self.retrieve_docs(
-            q,
-            k=k,
-            where=where,
-            candidate_k=candidate_k,
-            use_mmr=use_mmr,
-            lam=lam,
-            strategy=strategy,
-        )
-        return {
-            "query": q,
-            "retrieved": len(docs),
-            "conf": round(self._conf(docs), 4),
-            "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
-            "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-        }
-
-    def _should_eval_query_parse(self) -> bool:
-        if _env_int("RAG_QUERY_PARSE_EVAL", 0) != 1:
-            return False
-        rate = _env_float("RAG_QUERY_PARSE_EVAL_RATE", 1.0)
-        if rate >= 1.0:
-            return True
-        if rate <= 0.0:
-            return False
-        return random.random() < rate
-
-    async def _maybe_attach_query_parse_eval(
-        self,
-        metrics: Dict[str, Any],
-        *,
-        original_q: str,
-        parsed_q: str,
-        parsed_mode: str,
-        k: int,
-        where: Optional[Dict[str, Any]],
-        candidate_k: Optional[int],
-        use_mmr: bool,
-        lam: float,
-        strategy: str,
-    ) -> None:
-        """
-        Attach query_parse_eval into metrics (in-place) when enabled.
-        Avoids redundant LLM parse calls by reusing parsed_q if already LLM.
-        """
-        if not self._should_eval_query_parse():
-            return
-
-        regex_q = self._parse_query_regex(original_q)
-
-        # LLM 쿼리는 이미 llm 모드로 파싱했다면 재사용 (중복 호출 방지)
-        if parsed_mode == "llm":
-            llm_q = parsed_q
-        else:
-            llm_q = await self._parse_query_llm(original_q)
-
-        metrics["query_parse_eval"] = {
-            "regex": self._eval_query_metrics(
-                regex_q,
-                k=k,
-                where=where,
-                candidate_k=candidate_k,
-                use_mmr=use_mmr,
-                lam=lam,
-                strategy=strategy,
-            ),
-            "llm": self._eval_query_metrics(
-                llm_q,
-                k=k,
-                where=where,
-                candidate_k=candidate_k,
-                use_mmr=use_mmr,
-                lam=lam,
-                strategy=strategy,
-            ),
-        }
-
     # public -------------------------------------------------------------------
     async def ask(
         self,
@@ -385,7 +198,7 @@ class RagService:
 
         # 1) parse + retrieve
         t0 = time.perf_counter()
-        parsed_q, parser_mode = await self._parse_query(q)
+        parsed_q, parser_mode = await self._parser.parse(q)
         docs = self.retrieve_docs(
             parsed_q,
             k=k,
@@ -402,7 +215,8 @@ class RagService:
 
         # metrics 기본 골격(early return에서도 동일하게 쓰려고 미리 만들어 둠)
         base_total_ms = (time.perf_counter() - t_total0) * 1000.0
-        metrics = self._base_metrics(
+        metrics = rag_metrics.base_metrics(
+            self,
             k=k,
             strategy=strategy,
             use_reranker=bool(self._reranker),
@@ -422,7 +236,9 @@ class RagService:
                 answer="컨텍스트가 불충분합니다. 더 구체적인 단서가 필요합니다.",
                 documents=[],
             ).model_dump()
-            await self._maybe_attach_query_parse_eval(
+            await rag_metrics.maybe_attach_query_parse_eval(
+                self,
+                self._parser,
                 metrics,
                 original_q=q,
                 parsed_q=parsed_q,
@@ -450,7 +266,8 @@ class RagService:
         context = self.build_context(docs)
         if not context:
             total_ms = (time.perf_counter() - t_total0) * 1000.0
-            metrics = self._base_metrics(
+            metrics = rag_metrics.base_metrics(
+                self,
                 k=k,
                 strategy=strategy,
                 use_reranker=bool(self._reranker),
@@ -464,7 +281,9 @@ class RagService:
                 parsed_query=parsed_q,
             )
             resp = RAGQueryResponse(question=q, answer="관련 컨텍스트가 없습니다.", documents=[]).model_dump()
-            await self._maybe_attach_query_parse_eval(
+            await rag_metrics.maybe_attach_query_parse_eval(
+                self,
+                self._parser,
                 metrics,
                 original_q=q,
                 parsed_q=parsed_q,
@@ -492,7 +311,8 @@ class RagService:
             t_llm_ms = (time.perf_counter() - t_llm0) * 1000.0
         except Exception as e:  # pragma: no cover
             total_ms = (time.perf_counter() - t_total0) * 1000.0
-            metrics = self._base_metrics(
+            metrics = rag_metrics.base_metrics(
+                self,
                 k=k,
                 strategy=strategy,
                 use_reranker=bool(self._reranker),
@@ -535,7 +355,8 @@ class RagService:
             )
 
         total_ms = (time.perf_counter() - t_total0) * 1000.0
-        metrics = self._base_metrics(
+        metrics = rag_metrics.base_metrics(
+            self,
             k=k,
             strategy=strategy,
             use_reranker=bool(self._reranker),
@@ -549,7 +370,9 @@ class RagService:
             parsed_query=parsed_q,
         )
 
-        await self._maybe_attach_query_parse_eval(
+        await rag_metrics.maybe_attach_query_parse_eval(
+            self,
+            self._parser,
             metrics,
             original_q=q,
             parsed_q=parsed_q,
