@@ -30,7 +30,6 @@ from .retrieval import retrieve_docs as _retrieve_docs
 from .parser import QueryParser
 from . import metrics as rag_metrics
 
-
 _RERANKER_SINGLETON = None
 _RERANKER_DEVICE = None
 
@@ -95,6 +94,7 @@ class RagService:
     def _conf(self, items: List[Dict[str, Any]]) -> float:
         if not items:
             return 0.0
+
         ce = [it.get("_ce") for it in items[:5] if it.get("_ce") is not None]
         if ce:
             x = np.array(ce, dtype=np.float32)
@@ -139,45 +139,54 @@ class RagService:
 
     def _render_prompt(self, question: str, context: str) -> str:
         from ...prompt.loader import render_template
+
         return render_template("rag_prompt", question=question, context=context)
 
     # query parsing -------------------------------------------------------------
     @overload
-    async def parse_query(self, q: str, *, with_mode: bool = False) -> str:
-        ...
-
+    async def parse_query(self, q: str, *, with_mode: bool = False) -> str: ...
     @overload
-    async def parse_query(self, q: str, *, with_mode: bool = True) -> Tuple[str, str]:
-        ...
+    async def parse_query(self, q: str, *, with_mode: bool = True) -> Tuple[str, str]: ...
 
     async def parse_query(self, q: str, *, with_mode: bool = False) -> str | Tuple[str, str]:
         parsed, mode = await self._parser.parse(q)
-        if with_mode:
-            return parsed, mode
-        return parsed
+        return (parsed, mode) if with_mode else parsed
 
-    @overload
-    async def parse_query(self, q: str, *, with_mode: bool = False) -> str:
-        ...
-
-    @overload
-    async def parse_query(self, q: str, *, with_mode: bool = True) -> Tuple[str, str]:
-        ...
-
-    async def parse_query(self, q: str, *, with_mode: bool = False) -> str | Tuple[str, str]:
-        """Public query parser API for routers/services.
-
-        Returns the parsed query string by default. Use ``with_mode=True`` to
-        retrieve a tuple of (parsed_query, mode_used).
-        """
-        parsed, mode = await self._parse_query(q)
-        if with_mode:
-            return parsed, mode
-        return parsed
-
-    # metrics helpers -----------------------------------------------------------
+    # helpers ------------------------------------------------------------------
     def _device_name(self) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
+
+    def _make_metrics(
+        self,
+        *,
+        t_total0: float,
+        t_retr_ms: float,
+        t_expand_ms: float,
+        t_llm_ms: float,
+        conf: float,
+        docs_for_quality: List[Dict[str, Any]],
+        parsed_q: str,
+        parser_mode: str,
+        k: int,
+        strategy: str,
+        retrieved: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        total_ms = (time.perf_counter() - t_total0) * 1000.0
+        return rag_metrics.base_metrics(
+            k=k,
+            strategy=strategy,
+            use_reranker=bool(self._reranker),
+            retriever_ms=t_retr_ms,
+            expand_ms=t_expand_ms,
+            llm_ms=t_llm_ms,
+            total_ms=total_ms,
+            conf=conf,
+            docs=docs_for_quality,
+            device=self._device_name(),
+            parser_mode=parser_mode,
+            parsed_query=parsed_q,
+            retrieved=retrieved,
+        )
 
     # public -------------------------------------------------------------------
     async def ask(
@@ -213,29 +222,21 @@ class RagService:
         conf = self._conf(docs)
         min_conf = _env_float("RAG_MIN_CONF", float(os.getenv("RAG_MIN_CONF", "0.20")))
 
-        # metrics 기본 골격(early return에서도 동일하게 쓰려고 미리 만들어 둠)
-        base_total_ms = (time.perf_counter() - t_total0) * 1000.0
-        metrics = rag_metrics.base_metrics(
-            self,
-            k=k,
-            strategy=strategy,
-            use_reranker=bool(self._reranker),
-            retriever_ms=t_retr_ms,
-            expand_ms=0.0,
-            llm_ms=0.0,
-            total_ms=base_total_ms,
-            conf=conf,
-            docs=docs,
-            parser_mode=parser_mode,
-            parsed_query=parsed_q,
-        )
-
+        # early return: low confidence
         if conf < min_conf:
-            resp = RAGQueryResponse(
-                question=q,
-                answer="컨텍스트가 불충분합니다. 더 구체적인 단서가 필요합니다.",
-                documents=[],
-            ).model_dump()
+            metrics = self._make_metrics(
+                t_total0=t_total0,
+                t_retr_ms=t_retr_ms,
+                t_expand_ms=0.0,
+                t_llm_ms=0.0,
+                conf=conf,
+                docs_for_quality=docs,
+                parsed_q=parsed_q,
+                parser_mode=parser_mode,
+                k=k,
+                strategy=strategy,
+                retrieved=len(docs),
+            )
             await rag_metrics.maybe_attach_query_parse_eval(
                 self,
                 self._parser,
@@ -250,10 +251,15 @@ class RagService:
                 lam=lam,
                 strategy=strategy,
             )
+            resp = RAGQueryResponse(
+                question=q,
+                answer="컨텍스트가 불충분합니다. 더 구체적인 단서가 필요합니다.",
+                documents=[],
+            ).model_dump()
             resp["metrics"] = metrics
             return resp
 
-        # 2) expand + (optional) quota
+        # 2) expand (+ optional quota)
         t1_0 = time.perf_counter()
         docs = self._expand_same_doc(q, docs, per_doc=2)
         t_expand_ms = (time.perf_counter() - t1_0) * 1000.0
@@ -265,22 +271,19 @@ class RagService:
         # context
         context = self.build_context(docs)
         if not context:
-            total_ms = (time.perf_counter() - t_total0) * 1000.0
-            metrics = rag_metrics.base_metrics(
-                self,
+            metrics = self._make_metrics(
+                t_total0=t_total0,
+                t_retr_ms=t_retr_ms,
+                t_expand_ms=t_expand_ms,
+                t_llm_ms=0.0,
+                conf=conf,
+                docs_for_quality=docs,
+                parsed_q=parsed_q,
+                parser_mode=parser_mode,
                 k=k,
                 strategy=strategy,
-                use_reranker=bool(self._reranker),
-                retriever_ms=t_retr_ms,
-                expand_ms=t_expand_ms,
-                llm_ms=0.0,
-                total_ms=total_ms,
-                conf=conf,
-                docs=docs,
-                parser_mode=parser_mode,
-                parsed_query=parsed_q,
+                retrieved=len(docs),
             )
-            resp = RAGQueryResponse(question=q, answer="관련 컨텍스트가 없습니다.", documents=[]).model_dump()
             await rag_metrics.maybe_attach_query_parse_eval(
                 self,
                 self._parser,
@@ -295,6 +298,7 @@ class RagService:
                 lam=lam,
                 strategy=strategy,
             )
+            resp = RAGQueryResponse(question=q, answer="관련 컨텍스트가 없습니다.", documents=[]).model_dump()
             resp["metrics"] = metrics
             return resp
 
@@ -310,20 +314,18 @@ class RagService:
             out = await self.chat(messages, max_tokens=max_tokens, temperature=temperature)
             t_llm_ms = (time.perf_counter() - t_llm0) * 1000.0
         except Exception as e:  # pragma: no cover
-            total_ms = (time.perf_counter() - t_total0) * 1000.0
-            metrics = rag_metrics.base_metrics(
-                self,
+            metrics = self._make_metrics(
+                t_total0=t_total0,
+                t_retr_ms=t_retr_ms,
+                t_expand_ms=t_expand_ms,
+                t_llm_ms=0.0,
+                conf=conf,
+                docs_for_quality=docs,
+                parsed_q=parsed_q,
+                parser_mode=parser_mode,
                 k=k,
                 strategy=strategy,
-                use_reranker=bool(self._reranker),
-                retriever_ms=t_retr_ms,
-                expand_ms=t_expand_ms,
-                llm_ms=0.0,
-                total_ms=total_ms,
-                conf=conf,
-                docs=docs,
-                parser_mode=parser_mode,
-                parsed_query=parsed_q,
+                retrieved=len(docs),
             )
             resp = RAGQueryResponse(question=q, answer=f"LLM 호출 실패: {e}", documents=[]).model_dump()
             resp["metrics"] = metrics
@@ -354,22 +356,19 @@ class RagService:
                 )
             )
 
-        total_ms = (time.perf_counter() - t_total0) * 1000.0
-        metrics = rag_metrics.base_metrics(
-            self,
+        metrics = self._make_metrics(
+            t_total0=t_total0,
+            t_retr_ms=t_retr_ms,
+            t_expand_ms=t_expand_ms,
+            t_llm_ms=t_llm_ms,
+            conf=conf,
+            docs_for_quality=docs,  # dup/conf 계산은 docs 기준(기존 유지)
+            parsed_q=parsed_q,
+            parser_mode=parser_mode,
             k=k,
             strategy=strategy,
-            use_reranker=bool(self._reranker),
-            retriever_ms=t_retr_ms,
-            expand_ms=t_expand_ms,
-            llm_ms=t_llm_ms,
-            total_ms=total_ms,
-            conf=conf,
-            docs=docs,  # NOTE: docs 기준으로 dup/conf 측정(기존과 동일)
-            parser_mode=parser_mode,
-            parsed_query=parsed_q,
+            retrieved=len(items),  # 응답 문서 수는 items가 더 직관적
         )
-
         await rag_metrics.maybe_attach_query_parse_eval(
             self,
             self._parser,
@@ -386,7 +385,6 @@ class RagService:
         )
 
         resp = RAGQueryResponse(question=q, answer=out, documents=items).model_dump()
-        metrics["retrieved"] = len(items)  # 응답 문서 수는 items 기준이 더 직관적
         resp["metrics"] = metrics
         return resp
 

@@ -40,7 +40,10 @@ def _rrf_merge_weighted(lists: List[List[Dict[str, Any]]], weights: Optional[Lis
             score_map[rid] = score_map.get(rid, 0.0) + (w / (K + r))
             if rid not in pick:
                 pick[rid] = it
-    return sorted(pick.values(), key=lambda it: score_map[_rrf_id(it)], reverse=True)
+    merged = list(pick.values())
+    for it in merged:
+        it["_rrf"] = float(score_map.get(_rrf_id(it), 0.0))
+    return sorted(merged, key=lambda it: score_map[_rrf_id(it)], reverse=True)
 
 
 class ChromaOnlyStrategy(RetrievalStrategy):
@@ -103,33 +106,30 @@ class ChromaOnlyStrategy(RetrievalStrategy):
         def _is_sentence_like(s: str) -> bool:
             return len((s or "").split()) >= 6 or any(ch in (s or "") for ch in ".?!")
 
+        use_w = os.getenv("RAG_USE_WEIGHTED_EXP", "true").lower() in ("1", "true", "yes")
+
+        def _merge_expansion_only() -> List[Dict[str, Any]]:
+            if use_w:
+                a0 = float(os.getenv("RAG_EXP_ALPHA", "1.0"))
+                decay = float(os.getenv("RAG_EXP_DECAY", "0.6"))
+                weights = [a0] + [a0 * (decay ** i) for i in range(len(lists) - 1)]
+                return _rrf_merge_weighted(lists, weights=weights, K=int(os.getenv("RAG_RRF_K", "60")))
+            return _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
+
         if hybrid_on:
             try:
                 # 문장형 질의면 하이브리드 가중치 축소
                 cooldown = float(os.getenv("HYBRID_ALPHA_SENT_COOLDOWN", "0.6"))
                 a = alpha * (cooldown if _is_sentence_like(q) else 1.0)
-                bm = bm25_search(q, n=base_n, where=where)  # flatten_chroma_result 형태를 맞추는걸 권장
+                bm = bm25_search(q, n=base_n, where=where)  # flatten_chroma_like list
                 rrf_K = int(os.getenv("RAG_RRF_K", "60"))
                 weights = [1.0] * len(lists) + [a]
                 items = _rrf_merge_weighted(lists + [bm], weights=weights, K=rrf_K)
             except Exception:
-                use_w = os.getenv("RAG_USE_WEIGHTED_EXP", "true").lower() in ("1","true","yes")
-            if use_w:
-                a0 = float(os.getenv("RAG_EXP_ALPHA", "1.0"))     # 메인 질의 가중
-                decay = float(os.getenv("RAG_EXP_DECAY", "0.6"))  # 확장 가중 감쇠
-                weights = [a0] + [a0 * (decay ** i) for i in range(len(lists)-1)]
-                items = _rrf_merge_weighted(lists, weights=weights, K=int(os.getenv("RAG_RRF_K", "60")))
-            else:
-                items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
+                # Hybrid failed -> fall back to expansion-only merge
+                items = _merge_expansion_only()
         else:
-            use_w = os.getenv("RAG_USE_WEIGHTED_EXP", "true").lower() in ("1","true","yes")
-            if use_w:
-                a0 = float(os.getenv("RAG_EXP_ALPHA", "1.0"))     # 메인 질의 가중
-                decay = float(os.getenv("RAG_EXP_DECAY", "0.6"))  # 확장 가중 감쇠
-                weights = [a0] + [a0 * (decay ** i) for i in range(len(lists)-1)]
-                items = _rrf_merge_weighted(lists, weights=weights, K=int(os.getenv("RAG_RRF_K", "60")))
-            else:
-                items = _rrf_merge(lists, K=int(os.getenv("RAG_RRF_K", "60")))
+            items = _merge_expansion_only()
 
         base = self._dedup_and_score(service, items)
 

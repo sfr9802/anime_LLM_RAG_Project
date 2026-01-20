@@ -30,9 +30,12 @@ _ALIAS_MAP = getattr(config, "ALIAS_MAP", None) or _DEFAULT_ALIAS_MAP
 
 def _expand_queries(q: str) -> List[str]:
     out = [q]
-    nq = _norm(q)
-    if nq != q:
-        out.append(nq)
+    # NOTE: normalized/no-space query is usually harmful for dense retrieval.
+    # Keep it behind a flag for sparse / debugging use.
+    if os.getenv("RAG_USE_NORM_QUERY", "0").lower() in ("1", "true", "yes"):
+        nq = _norm(q)
+        if nq and nq != q:
+            out.append(nq)
     for k, vs in _ALIAS_MAP.items():
         if k in q:
             out.extend(vs)

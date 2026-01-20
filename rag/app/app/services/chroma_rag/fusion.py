@@ -51,6 +51,11 @@ def _rrf_merge(ranked_lists: List[List[Dict[str, Any]]], K: int = 60) -> List[Di
             if _id not in keep:
                 keep[_id] = it
     merged = list(keep.values())
+    # Attach rank-fusion score for downstream debugging / fallback scoring.
+    for it in merged:
+        _id = str(it.get("id") or "")
+        if _id:
+            it["_rrf"] = float(score.get(_id, 0.0))
     merged.sort(key=lambda it: score.get(str(it.get("id") or ""), 0.0), reverse=True)
     return merged
 

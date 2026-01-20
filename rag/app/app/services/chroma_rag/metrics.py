@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import random
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +24,6 @@ except Exception:  # pragma: no cover
 
 
 def base_metrics(
-    service,
     *,
     k: int,
     strategy: str,
@@ -36,8 +34,10 @@ def base_metrics(
     total_ms: float,
     conf: float,
     docs: List[Dict[str, Any]],
+    device: str,
     parser_mode: str,
     parsed_query: str,
+    retrieved: Optional[int] = None,
 ) -> Dict[str, Any]:
     return {
         "k": k,
@@ -50,8 +50,8 @@ def base_metrics(
         "conf": round(conf, 4),
         "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
         "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-        "device": service._device_name(),
-        "retrieved": len(docs),
+        "device": device,
+        "retrieved": int(retrieved if retrieved is not None else len(docs)),
         "query_parser": parser_mode,
         "parsed_query": parsed_query,
     }
@@ -112,10 +112,17 @@ async def maybe_attach_query_parse_eval(
     lam: float,
     strategy: str,
 ) -> None:
+    """
+    Adds metrics["query_parse_eval"] with retrieval-only comparison:
+    - regex query vs llm query
+    NOTE: This can be expensive; it's gated by should_eval_query_parse().
+    """
     if not should_eval_query_parse():
         return
 
     regex_q = parser.parse_regex(original_q)
+
+    # LLM parse 중복 방지: 이미 llm 모드로 파싱했다면 parsed_q 재사용
     if parsed_mode == "llm":
         llm_q = parsed_q
     else:

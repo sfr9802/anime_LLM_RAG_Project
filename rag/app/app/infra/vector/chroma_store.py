@@ -58,6 +58,7 @@ def _sanitize_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
 # ───────────── globals ─────────────
 _client: Optional[chromadb.Client] = None
 _coll: Optional[Any] = None
+_COLL_SPACE: Optional[str] = None  # actual space read from collection metadata
 _lock = threading.Lock()
 _EMBED_FN: Any = None  # 최종적으로 Chroma가 허용하는 EF 객체
 _EMBED_FN_LOCK = threading.Lock()
@@ -76,6 +77,38 @@ def _col_name() -> str:
 
 def _space() -> str:
     return str(getattr(config, "CHROMA_SPACE", "cosine")).lower()
+
+def _read_space_from_collection(coll: Any) -> Optional[str]:
+    """Best-effort: read actual hnsw space from collection metadata.
+
+    Returns lowercased space (e.g. 'cosine' | 'l2' | 'ip') or None if unknown.
+    """
+    try:
+        meta = getattr(coll, 'metadata', None)
+        meta = meta() if callable(meta) else meta
+        if isinstance(meta, dict):
+            sp = meta.get('hnsw:space') or meta.get('hnsw_space')
+            if sp:
+                return str(sp).lower()
+    except Exception:
+        pass
+    return None
+
+def _collection_space() -> str:
+    """Return actual collection space if available; otherwise fall back to config.
+
+    Cached for the default collection to avoid repeated attribute lookups.
+    """
+    global _COLL_SPACE
+    if _COLL_SPACE:
+        return _COLL_SPACE
+    try:
+        coll = get_collection()
+        sp = _read_space_from_collection(coll)
+    except Exception:
+        sp = None
+    _COLL_SPACE = sp or _space()
+    return _COLL_SPACE
 
 def _top_k_default() -> int:
     try:
@@ -246,7 +279,7 @@ def _open_with_mode(cli: chromadb.Client, name: str, space: str, mode: str):
 
 def _ensure_client_and_collection() -> None:
     """기본 컬렉션을 준비. 모드에 따라 EF 부착/무부착."""
-    global _client, _coll
+    global _client, _coll, _COLL_SPACE
     if _client is not None and _coll is not None:
         return
     with _lock:
@@ -258,6 +291,9 @@ def _ensure_client_and_collection() -> None:
             mode = _attach_ef_mode()
             log.info(f"[Chroma] get_or_create_collection name={name} space={space} mode={mode}")
             _coll = _open_with_mode(_client, name, space, mode)
+            # read actual space from collection metadata (may differ from config for existing collections)
+            global _COLL_SPACE
+            _COLL_SPACE = _read_space_from_collection(_coll) or space
 
 def _get_client() -> chromadb.Client:
     global _client
@@ -277,7 +313,7 @@ def get_collection():
 
 def reset_collection() -> None:
     """컬렉션만 삭제 후 재생성(폴더 유지)."""
-    global _client, _coll
+    global _client, _coll, _COLL_SPACE
     with _lock:
         if _client is None:
             _client = _new_client(_db_path())
@@ -288,10 +324,11 @@ def reset_collection() -> None:
             log.warning(f"[Chroma] delete_collection ignored: {e}")
         mode = _attach_ef_mode()
         _coll = _open_with_mode(_client, _col_name(), _space(), mode)
+        _COLL_SPACE = _read_space_from_collection(_coll) or _space()
 
 def hard_reset_persist_dir() -> None:
     """저장 폴더 자체를 날리고 완전 초기화."""
-    global _client, _coll
+    global _client, _coll, _COLL_SPACE
     path = _db_path()
     log.warning(f"[Chroma] HARD RESET path={path}")
     try:
@@ -300,6 +337,8 @@ def hard_reset_persist_dir() -> None:
         os.makedirs(path, exist_ok=True)
     _client = None
     _coll = None
+    global _COLL_SPACE
+    _COLL_SPACE = None
     _ensure_client_and_collection()
 
 def upsert(
@@ -406,13 +445,13 @@ def search(
     if query_embeddings is not None:
         q_kwargs["query_embeddings"] = [query_embeddings]
         res = coll.query(**q_kwargs)
-        return {"space": _space(), **res}
+        return {"space": _collection_space(), **res}
 
     # 2) 텍스트 → EF 경유 시도, 실패 시 직접 임베딩 폴백
     try:
         q_kwargs["query_texts"] = [query]
         res = coll.query(**q_kwargs)
-        return {"space": _space(), **res}
+        return {"space": _collection_space(), **res}
     except Exception as e:
         log.warning(f"[Chroma] query_texts failed, fallback to query_embeddings: {e}")
         emb_obj = _get_embed_fn()
@@ -423,7 +462,7 @@ def search(
         q_kwargs.pop("query_texts", None)
         q_kwargs["query_embeddings"] = [emb]
         res = coll.query(**q_kwargs)
-        return {"space": _space(), **res}
+        return {"space": _collection_space(), **res}
 
 # ───────────── migration utils ─────────────
 def reembed_to_new_collection(

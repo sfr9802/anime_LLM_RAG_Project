@@ -14,16 +14,39 @@ class RetrievalStrategy:
     # helper methods ---------------------------------------------------------
     def _dedup_and_score(self, service, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove duplicate documents and attach similarity scores."""
+
+        def _uid(it: Dict[str, Any]) -> str:
+            md = it.get("metadata") or {}
+            # Prefer stable doc_id -> chunk id -> fallback composite.
+            did = md.get("doc_id")
+            if did:
+                return str(did)
+            _id = it.get("id")
+            if _id:
+                return str(_id)
+            title = (md.get("title") or it.get("title") or "").strip()
+            sec = (md.get("section") or it.get("section") or "").strip()
+            off = (md.get("offset") or it.get("offset") or "")
+            return f"{title}|{sec}|{off}"
+
         seen = set()
         out: List[Dict[str, Any]] = []
         for it in items:
             meta = it.get("metadata") or {}
-            key = meta.get("doc_id") or (meta.get("title"), meta.get("section")) or it.get("id")
+            key = _uid(it)
             if key in seen:
                 continue
             seen.add(key)
             if it.get("score") is None:
-                it["score"] = to_similarity(it.get("distance"), space=service._last_space)
+                # Standardize: always attach a monotonic "score" (higher is better).
+                dist = it.get("distance")
+                if dist is not None:
+                    space = getattr(service, "_last_space", None) or "cosine"
+                    it["score"] = to_similarity(dist, space=space)
+                elif it.get("_rrf") is not None:
+                    it["score"] = float(it.get("_rrf") or 0.0)
+                else:
+                    it["score"] = 0.0
             out.append(it)
         return out
 

@@ -12,8 +12,10 @@ SearchFn = Callable[..., Dict[str, Any]]
 def _get_ce():
     """CrossEncoder는 한번만 로드(서빙 병목 방지)."""
     from sentence_transformers import CrossEncoder
+    import torch
     # max_length로 잘라 OOM 방지
-    return CrossEncoder("BAAI/bge-reranker-v2-m3", max_length=512)
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    return CrossEncoder("BAAI/bge-reranker-v2-m3", device=dev, max_length=512)
 
 # (옵션) 간단 리랭크 & MMR 유틸
 def _rerank_ce(query: str, items: List[Dict[str, Any]], top_k: int, text_max_chars: int = 4000) -> List[Dict[str, Any]]:
@@ -37,7 +39,11 @@ def _mmr(items: List[Dict[str, Any]], top_k: int, lambda_: float = 0.7) -> List[
     while candidates and len(selected) < top_k:
         best, best_val = None, -1e9
         for c in candidates:
-            rel = float(c.get("score") or 0.0)  # score가 반드시 채워져 있어야 효과 있음
+            # If rerank ran, prefer rerank_score; else fall back to similarity score.
+            rel = c.get("rerank_score")
+            if rel is None:
+                rel = c.get("score")
+            rel = float(rel or 0.0)
             # 같은 title 중복 최소화(간이 페널티)
             div = 0.0
             for s in selected:

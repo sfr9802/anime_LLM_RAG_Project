@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from app.app.infra.vector.chroma_store import search as chroma_search
 from app.app.services.adapters import flatten_chroma_result
+from app.app.infra.vector.metrics import to_similarity
 
 
 def _expand_same_doc(q: str, items: List[Dict[str, Any]], per_doc: int = 2) -> List[Dict[str, Any]]:
@@ -30,6 +31,12 @@ def _expand_same_doc(q: str, items: List[Dict[str, Any]], per_doc: int = 2) -> L
             include_distances=True,
         )
         ext = flatten_chroma_result(res)
+
+        # Ensure ext chunks have usable score for sorting.
+        space = (res.get("space") or "cosine").lower()
+        for e in ext:
+            if e.get("score") is None and e.get("distance") is not None:
+                e["score"] = to_similarity(e.get("distance"), space=space)
 
         def _prio(x):
             sec = (x.get("metadata") or {}).get("section") or ""
