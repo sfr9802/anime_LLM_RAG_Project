@@ -11,13 +11,14 @@ def _where_from(section: str | None):
     return {"section": section} if section else None
 
 @router.post("/query", response_model=QueryResponse)
-def rag_query(
+async def rag_query(
     req: QueryRequest,
     top_k: int = Query(6, ge=1, le=50),
     section: str | None = Query(None),
 ):
+    parsed_q = await _rag._parse_query(req.question)
     docs = _rag.retrieve_docs(
-        req.question,
+        parsed_q,
         k=top_k,
         where=_where_from(section),
         use_mmr=False,   # 동선 확인용이면 우선 끔

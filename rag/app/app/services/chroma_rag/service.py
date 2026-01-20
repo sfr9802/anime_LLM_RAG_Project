@@ -23,8 +23,8 @@ try:
     from app.app.domain.models.document_model import DocumentItem
     from app.app.domain.models.query_model import RAGQueryResponse
 except Exception:  # pragma: no cover
-    from app.app.models.document_model import DocumentItem
-    from app.app.models.query_model import RAGQueryResponse
+    from app.app.domain.models.document_model import DocumentItem
+    from app.app.domain.models.query_model import RAGQueryResponse
 
 from .utils import _env_float, _env_int
 from .expand import _expand_same_doc, _quota_by_section
