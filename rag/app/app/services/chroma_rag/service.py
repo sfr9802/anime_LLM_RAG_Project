@@ -156,6 +156,25 @@ class RagService:
             return parsed, mode
         return parsed
 
+    @overload
+    async def parse_query(self, q: str, *, with_mode: bool = False) -> str:
+        ...
+
+    @overload
+    async def parse_query(self, q: str, *, with_mode: bool = True) -> Tuple[str, str]:
+        ...
+
+    async def parse_query(self, q: str, *, with_mode: bool = False) -> str | Tuple[str, str]:
+        """Public query parser API for routers/services.
+
+        Returns the parsed query string by default. Use ``with_mode=True`` to
+        retrieve a tuple of (parsed_query, mode_used).
+        """
+        parsed, mode = await self._parse_query(q)
+        if with_mode:
+            return parsed, mode
+        return parsed
+
     # metrics helpers -----------------------------------------------------------
     def _device_name(self) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
