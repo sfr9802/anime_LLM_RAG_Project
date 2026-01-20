@@ -3,15 +3,10 @@ from __future__ import annotations
 from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from app.app.services.chroma_rag import RagService
+from app.app.services import RagBackend, get_rag_service
 from app.app.domain.models.query_model import QueryRequest, RAGQueryResponse
 
 router = APIRouter(prefix="/rag", tags=["rag"])
-
-_rag = RagService()
-
-def get_rag() -> RagService:
-    return _rag
 
 @router.post("/ask", response_model=RAGQueryResponse)
 async def rag_ask(
@@ -24,7 +19,7 @@ async def rag_ask(
     temperature: float = Query(0.2, ge=0.0, le=2.0),
     preview_chars: int = Query(600, ge=0, le=8000),
     section: Optional[str] = Query(None),  # 필요없으면 삭제
-    rag: RagService = Depends(get_rag),
+    rag: RagBackend = Depends(get_rag_service),
 ):
     try:
         where = {"section": section} if section else None
