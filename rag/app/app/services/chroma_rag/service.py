@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import json
 import logging
 import os
+import re
 import time
 import numpy as np
 import torch
@@ -154,11 +155,12 @@ class RagService:
         from ...prompt.loader import render_template
         return render_template("rag_prompt", question=question, context=context)
 
-    async def _parse_query(self, q: str) -> str:
-        mode = (os.getenv("RAG_QUERY_PARSER", "regex") or "regex").strip().lower()
-        if mode != "llm":
-            return q
+    def _parse_query_regex(self, q: str) -> str:
+        cleaned = re.sub(r"[\"'`]+", "", q or "")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned or q
 
+    async def _parse_query_llm(self, q: str) -> str:
         from ...prompt.loader import render_template
         prompt = render_template("query_parse_prompt", user_query=q)
         max_tokens = _env_int("RAG_QUERY_PARSE_MAX_TOKENS", 120)
@@ -200,6 +202,40 @@ class RagService:
             _LOG.info("Query parse produced empty query; falling back.")
         return parsed or q
 
+    async def _parse_query(self, q: str) -> str:
+        mode = (os.getenv("RAG_QUERY_PARSER", "regex") or "regex").strip().lower()
+        if mode == "llm":
+            return await self._parse_query_llm(q)
+        return self._parse_query_regex(q)
+
+    def _eval_query_metrics(
+        self,
+        q: str,
+        *,
+        k: int,
+        where: Optional[Dict[str, Any]],
+        candidate_k: Optional[int],
+        use_mmr: bool,
+        lam: float,
+        strategy: str,
+    ) -> Dict[str, Any]:
+        docs = self.retrieve_docs(
+            q,
+            k=k,
+            where=where,
+            candidate_k=candidate_k,
+            use_mmr=use_mmr,
+            lam=lam,
+            strategy=strategy,
+        )
+        return {
+            "query": q,
+            "retrieved": len(docs),
+            "conf": round(self._conf(docs), 4),
+            "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
+            "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
+        }
+
     # public -------------------------------------------------------------------
     async def ask(
         self,
@@ -232,6 +268,7 @@ class RagService:
 
         conf = self._conf(docs)
         min_conf = _env_float("RAG_MIN_CONF", float(os.getenv("RAG_MIN_CONF", "0.20")))
+        eval_on = _env_int("RAG_QUERY_PARSE_EVAL", 0) == 1
         if conf < min_conf:
             resp = RAGQueryResponse(
                 question=q,
@@ -252,6 +289,29 @@ class RagService:
                 "device": "cuda" if torch.cuda.is_available() else "cpu",
                 "retrieved": len(docs),
             }
+            if eval_on:
+                regex_q = self._parse_query_regex(q)
+                llm_q = await self._parse_query_llm(q)
+                resp["metrics"]["query_parse_eval"] = {
+                    "regex": self._eval_query_metrics(
+                        regex_q,
+                        k=k,
+                        where=where,
+                        candidate_k=candidate_k,
+                        use_mmr=use_mmr,
+                        lam=lam,
+                        strategy=strategy,
+                    ),
+                    "llm": self._eval_query_metrics(
+                        llm_q,
+                        k=k,
+                        where=where,
+                        candidate_k=candidate_k,
+                        use_mmr=use_mmr,
+                        lam=lam,
+                        strategy=strategy,
+                    ),
+                }
             return resp
 
         t1_0 = time.perf_counter()
@@ -279,6 +339,29 @@ class RagService:
                 "device": "cuda" if torch.cuda.is_available() else "cpu",
                 "retrieved": len(docs),
             }
+            if eval_on:
+                regex_q = self._parse_query_regex(q)
+                llm_q = await self._parse_query_llm(q)
+                resp["metrics"]["query_parse_eval"] = {
+                    "regex": self._eval_query_metrics(
+                        regex_q,
+                        k=k,
+                        where=where,
+                        candidate_k=candidate_k,
+                        use_mmr=use_mmr,
+                        lam=lam,
+                        strategy=strategy,
+                    ),
+                    "llm": self._eval_query_metrics(
+                        llm_q,
+                        k=k,
+                        where=where,
+                        candidate_k=candidate_k,
+                        use_mmr=use_mmr,
+                        lam=lam,
+                        strategy=strategy,
+                    ),
+                }
             return resp
 
         prompt = self._render_prompt(q, context)
@@ -348,6 +431,29 @@ class RagService:
             "device": "cuda" if torch.cuda.is_available() else "cpu",
             "retrieved": len(items),
         }
+        if eval_on:
+            regex_q = self._parse_query_regex(q)
+            llm_q = await self._parse_query_llm(q)
+            resp["metrics"]["query_parse_eval"] = {
+                "regex": self._eval_query_metrics(
+                    regex_q,
+                    k=k,
+                    where=where,
+                    candidate_k=candidate_k,
+                    use_mmr=use_mmr,
+                    lam=lam,
+                    strategy=strategy,
+                ),
+                "llm": self._eval_query_metrics(
+                    llm_q,
+                    k=k,
+                    where=where,
+                    candidate_k=candidate_k,
+                    use_mmr=use_mmr,
+                    lam=lam,
+                    strategy=strategy,
+                ),
+            }
         return resp
 
 
