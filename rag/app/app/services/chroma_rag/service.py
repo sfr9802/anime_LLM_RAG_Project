@@ -3,6 +3,8 @@ from __future__ import annotations
 """Main RAG service orchestrating retrieval and answer generation."""
 
 from typing import Any, Dict, List, Optional
+import json
+import logging
 import os
 import time
 import numpy as np
@@ -23,7 +25,7 @@ except Exception:  # pragma: no cover
     from app.app.models.document_model import DocumentItem
     from app.app.models.query_model import RAGQueryResponse
 
-from .utils import _env_float
+from .utils import _env_float, _env_int
 from .expand import _expand_same_doc, _quota_by_section
 from .retrieval import retrieve_docs as _retrieve_docs
 
@@ -47,6 +49,7 @@ except Exception:  # pragma: no cover
 
 _RERANKER_SINGLETON = None
 _RERANKER_DEVICE = None
+_LOG = logging.getLogger("rag.query_parse")
 
 
 class RagService:
@@ -151,6 +154,51 @@ class RagService:
         from ...prompt.loader import render_template
         return render_template("rag_prompt", question=question, context=context)
 
+    async def _parse_query(self, q: str) -> str:
+        mode = (os.getenv("RAG_QUERY_PARSER", "regex") or "regex").strip().lower()
+        if mode != "llm":
+            return q
+
+        from ...prompt.loader import render_template
+        prompt = render_template("query_parse_prompt", user_query=q)
+        max_tokens = _env_int("RAG_QUERY_PARSE_MAX_TOKENS", 120)
+        temperature = _env_float("RAG_QUERY_PARSE_TEMPERATURE", 0.0)
+        try:
+            out = await self.chat(
+                [
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception:
+            _LOG.exception("Query parse failed; falling back to original query.")
+            return q
+
+        raw = (out or "").strip()
+        if not raw:
+            _LOG.info("Query parse returned empty output; falling back.")
+            return q
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            left = raw.find("{")
+            right = raw.rfind("}")
+            if left < 0 or right < 0 or right <= left:
+                _LOG.info("Query parse returned non-JSON output; falling back.")
+                return q
+            try:
+                data = json.loads(raw[left : right + 1])
+            except json.JSONDecodeError:
+                _LOG.info("Query parse returned invalid JSON; falling back.")
+                return q
+
+        parsed = (data.get("query") or "").strip()
+        if parsed:
+            _LOG.info("Query parsed: original=%s parsed=%s", q, parsed)
+        else:
+            _LOG.info("Query parse produced empty query; falling back.")
+        return parsed or q
 
     # public -------------------------------------------------------------------
     async def ask(
@@ -170,8 +218,9 @@ class RagService:
         t_total0 = time.perf_counter()
 
         t0 = time.perf_counter()
+        parsed_q = await self._parse_query(q)
         docs = self.retrieve_docs(
-            q,
+            parsed_q,
             k=k,
             where=where,
             candidate_k=candidate_k,
@@ -303,4 +352,3 @@ class RagService:
 
 
 __all__ = ["RagService"]
-
