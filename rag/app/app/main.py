@@ -16,7 +16,14 @@ from .configure import config
 
 from fastapi import FastAPI
 from .security.auth_middleware import AuthOnlyMiddleware
-from .api import chroma_rag_router, query_router, search_router, debug_router, admin_ingest_router
+from .api import (
+    admin_ingest_router,
+    chroma_rag_router,
+    debug_router,
+    faiss_rag_router,
+    query_router,
+    search_router,
+)
 
 app = FastAPI()
 
@@ -37,6 +44,7 @@ app.include_router(search_router.router)
 app.include_router(debug_router.router)
 app.include_router(admin_ingest_router.router)
 app.include_router(chroma_rag_router.router)
+app.include_router(faiss_rag_router.router)
 
 @app.get("/health")
 def health():

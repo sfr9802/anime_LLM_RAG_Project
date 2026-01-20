@@ -7,7 +7,7 @@ import os
 
 from ..services.retrieval_service import retrieve as svc_retrieve
 from ..services.eval_service import evaluate_hit as svc_evaluate_hit
-from ..services.chroma_rag import RagService
+from ..services import get_rag_service
 from ..infra.llm.provider import get_chat
 from ..configure import config
 
@@ -70,7 +70,7 @@ async def ping_llm():
     return {"ok": True, "provider": provider, "model": used_model, "answer": out}
 
 # ---------- RAG 즉석 호출 ----------
-_rag = RagService()  # ✅ 인자 없이
+_rag = get_rag_service()  # ✅ 인자 없이
 
 class RagAskIn(BaseModel):
     q: str

@@ -1,11 +1,9 @@
 # app/app/api/query_router.py
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from ..domain.models.query_model import QueryRequest, QueryResponse, RAGQueryResponse
-from ..services.chroma_rag import RagService
+from ..services import RagBackend, get_rag_service
 
 router = APIRouter(prefix="/rag", tags=["rag"])
-
-_rag = RagService()
 
 def _where_from(section: str | None):
     return {"section": section} if section else None
@@ -15,9 +13,10 @@ async def rag_query(
     req: QueryRequest,
     top_k: int = Query(6, ge=1, le=50),
     section: str | None = Query(None),
+    rag: RagBackend = Depends(get_rag_service),
 ):
-    parsed_q = await _rag._parse_query(req.question)
-    docs = _rag.retrieve_docs(
+    parsed_q = await rag.parse_query(req.question)
+    docs = rag.retrieve_docs(
         parsed_q,
         k=top_k,
         where=_where_from(section),
@@ -32,9 +31,10 @@ async def rag_query_debug(
     req: QueryRequest,
     top_k: int = Query(6, ge=1, le=50),
     section: str | None = Query(None),
+    rag: RagBackend = Depends(get_rag_service),
 ):
     # 실제 RAG 호출 (LLM까지)
-    return await _rag.ask(
+    return await rag.ask(
         q=req.question,
         k=top_k,
         where=_where_from(section),
