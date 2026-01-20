@@ -1,7 +1,10 @@
-# models/query_model.py
 from __future__ import annotations
-from typing import List
+
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from .base import AppBaseModel
+
+if TYPE_CHECKING:
+    from .document_model import DocumentItem
 
 class QueryRequest(AppBaseModel):
     question: str
@@ -11,8 +14,8 @@ class QueryResponse(AppBaseModel):
     answer: str
 
 class RAGQueryResponse(QueryResponse):
-    documents: List["DocumentItem"]  # 문자열로 참조
+    documents: List["DocumentItem"] = []
+    metrics: Dict[str, Any] = {}
 
-# 모든 클래스 정의 이후에 import & 재빌드
-from .document_model import DocumentItem
+# pydantic v2 forward ref rebuild
 RAGQueryResponse.model_rebuild()

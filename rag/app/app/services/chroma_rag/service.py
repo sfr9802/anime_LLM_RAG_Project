@@ -2,12 +2,14 @@ from __future__ import annotations
 
 """Main RAG service orchestrating retrieval and answer generation."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import json
 import logging
 import os
+import random
 import re
 import time
+
 import numpy as np
 import torch
 
@@ -59,9 +61,11 @@ class RagService:
     def __init__(self, force_reranker: Optional[bool] = None):
         self.chat = get_chat()
         self._last_space: str = "cosine"
+
         want = bool(int(os.getenv("RAG_USE_RERANK", "1")))
         if force_reranker is not None:
             want = bool(force_reranker)
+
         self._reranker = None
         if want and CrossEncoder is not None:
             dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -117,6 +121,7 @@ class RagService:
             p = np.exp(x)
             p = p / (p.sum() + 1e-8)
             return float(p[0])
+
         arr = [it.get("score", 0.0) for it in items[:3]]
         if not arr:
             return 0.0
@@ -150,26 +155,28 @@ class RagService:
             chunks.append(piece)
             total += len(piece)
         return "\n\n".join(chunks)
- 
+
     def _render_prompt(self, question: str, context: str) -> str:
         from ...prompt.loader import render_template
         return render_template("rag_prompt", question=question, context=context)
 
+    # query parsing -------------------------------------------------------------
     def _parse_query_regex(self, q: str) -> str:
+        # 최소 클린징: 인용부호류 제거 + 공백 정리
         cleaned = re.sub(r"[\"'`]+", "", q or "")
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned or q
 
     async def _parse_query_llm(self, q: str) -> str:
         from ...prompt.loader import render_template
+
         prompt = render_template("query_parse_prompt", user_query=q)
         max_tokens = _env_int("RAG_QUERY_PARSE_MAX_TOKENS", 120)
         temperature = _env_float("RAG_QUERY_PARSE_TEMPERATURE", 0.0)
+
         try:
             out = await self.chat(
-                [
-                    {"role": "user", "content": prompt},
-                ],
+                [{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -181,6 +188,7 @@ class RagService:
         if not raw:
             _LOG.info("Query parse returned empty output; falling back.")
             return q
+
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
@@ -202,11 +210,54 @@ class RagService:
             _LOG.info("Query parse produced empty query; falling back.")
         return parsed or q
 
-    async def _parse_query(self, q: str) -> str:
-        mode = (os.getenv("RAG_QUERY_PARSER", "regex") or "regex").strip().lower()
+    def _query_parser_mode(self) -> str:
+        return (os.getenv("RAG_QUERY_PARSER", "regex") or "regex").strip().lower()
+
+    async def _parse_query(self, q: str) -> Tuple[str, str]:
+        """
+        Returns: (parsed_query, mode_used)
+        mode_used is one of: "llm", "regex"
+        """
+        mode = self._query_parser_mode()
         if mode == "llm":
-            return await self._parse_query_llm(q)
-        return self._parse_query_regex(q)
+            return await self._parse_query_llm(q), "llm"
+        return self._parse_query_regex(q), "regex"
+
+    # metrics helpers -----------------------------------------------------------
+    def _device_name(self) -> str:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    def _base_metrics(
+        self,
+        *,
+        k: int,
+        strategy: str,
+        use_reranker: bool,
+        retriever_ms: float,
+        expand_ms: float,
+        llm_ms: float,
+        total_ms: float,
+        conf: float,
+        docs: List[Dict[str, Any]],
+        parser_mode: str,
+        parsed_query: str,
+    ) -> Dict[str, Any]:
+        return {
+            "k": k,
+            "strategy": strategy,
+            "use_reranker": use_reranker,
+            "retriever_ms": round(retriever_ms, 1),
+            "expand_ms": round(expand_ms, 1),
+            "llm_ms": round(llm_ms, 1),
+            "total_ms": round(total_ms, 1),
+            "conf": round(conf, 4),
+            "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
+            "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
+            "device": self._device_name(),
+            "retrieved": len(docs),
+            "query_parser": parser_mode,
+            "parsed_query": parsed_query,
+        }
 
     def _eval_query_metrics(
         self,
@@ -236,6 +287,66 @@ class RagService:
             "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
         }
 
+    def _should_eval_query_parse(self) -> bool:
+        if _env_int("RAG_QUERY_PARSE_EVAL", 0) != 1:
+            return False
+        rate = _env_float("RAG_QUERY_PARSE_EVAL_RATE", 1.0)
+        if rate >= 1.0:
+            return True
+        if rate <= 0.0:
+            return False
+        return random.random() < rate
+
+    async def _maybe_attach_query_parse_eval(
+        self,
+        metrics: Dict[str, Any],
+        *,
+        original_q: str,
+        parsed_q: str,
+        parsed_mode: str,
+        k: int,
+        where: Optional[Dict[str, Any]],
+        candidate_k: Optional[int],
+        use_mmr: bool,
+        lam: float,
+        strategy: str,
+    ) -> None:
+        """
+        Attach query_parse_eval into metrics (in-place) when enabled.
+        Avoids redundant LLM parse calls by reusing parsed_q if already LLM.
+        """
+        if not self._should_eval_query_parse():
+            return
+
+        regex_q = self._parse_query_regex(original_q)
+
+        # LLM 쿼리는 이미 llm 모드로 파싱했다면 재사용 (중복 호출 방지)
+        if parsed_mode == "llm":
+            llm_q = parsed_q
+        else:
+            llm_q = await self._parse_query_llm(original_q)
+
+        metrics["query_parse_eval"] = {
+            "regex": self._eval_query_metrics(
+                regex_q,
+                k=k,
+                where=where,
+                candidate_k=candidate_k,
+                use_mmr=use_mmr,
+                lam=lam,
+                strategy=strategy,
+            ),
+            "llm": self._eval_query_metrics(
+                llm_q,
+                k=k,
+                where=where,
+                candidate_k=candidate_k,
+                use_mmr=use_mmr,
+                lam=lam,
+                strategy=strategy,
+            ),
+        }
+
     # public -------------------------------------------------------------------
     async def ask(
         self,
@@ -248,13 +359,14 @@ class RagService:
         lam: float = 0.5,
         max_tokens: int = 512,
         temperature: float = 0.2,
-        preview_chars: int = 600,
+        preview_chars: int = 600,  # kept for compatibility (unused here)
         strategy: str = "baseline",
     ) -> Dict[str, Any]:
         t_total0 = time.perf_counter()
 
+        # 1) parse + retrieve
         t0 = time.perf_counter()
-        parsed_q = await self._parse_query(q)
+        parsed_q, parser_mode = await self._parse_query(q)
         docs = self.retrieve_docs(
             parsed_q,
             k=k,
@@ -268,52 +380,45 @@ class RagService:
 
         conf = self._conf(docs)
         min_conf = _env_float("RAG_MIN_CONF", float(os.getenv("RAG_MIN_CONF", "0.20")))
-        eval_on = _env_int("RAG_QUERY_PARSE_EVAL", 0) == 1
+
+        # metrics 기본 골격(early return에서도 동일하게 쓰려고 미리 만들어 둠)
+        base_total_ms = (time.perf_counter() - t_total0) * 1000.0
+        metrics = self._base_metrics(
+            k=k,
+            strategy=strategy,
+            use_reranker=bool(self._reranker),
+            retriever_ms=t_retr_ms,
+            expand_ms=0.0,
+            llm_ms=0.0,
+            total_ms=base_total_ms,
+            conf=conf,
+            docs=docs,
+            parser_mode=parser_mode,
+            parsed_query=parsed_q,
+        )
+
         if conf < min_conf:
             resp = RAGQueryResponse(
                 question=q,
                 answer="컨텍스트가 불충분합니다. 더 구체적인 단서가 필요합니다.",
                 documents=[],
             ).model_dump()
-            resp["metrics"] = {
-                "k": k,
-                "strategy": strategy,
-                "use_reranker": bool(self._reranker),
-                "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": 0.0,
-                "llm_ms": 0.0,
-                "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
-                "conf": round(conf, 4),
-                "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
-                "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-                "device": "cuda" if torch.cuda.is_available() else "cpu",
-                "retrieved": len(docs),
-            }
-            if eval_on:
-                regex_q = self._parse_query_regex(q)
-                llm_q = await self._parse_query_llm(q)
-                resp["metrics"]["query_parse_eval"] = {
-                    "regex": self._eval_query_metrics(
-                        regex_q,
-                        k=k,
-                        where=where,
-                        candidate_k=candidate_k,
-                        use_mmr=use_mmr,
-                        lam=lam,
-                        strategy=strategy,
-                    ),
-                    "llm": self._eval_query_metrics(
-                        llm_q,
-                        k=k,
-                        where=where,
-                        candidate_k=candidate_k,
-                        use_mmr=use_mmr,
-                        lam=lam,
-                        strategy=strategy,
-                    ),
-                }
+            await self._maybe_attach_query_parse_eval(
+                metrics,
+                original_q=q,
+                parsed_q=parsed_q,
+                parsed_mode=parser_mode,
+                k=k,
+                where=where,
+                candidate_k=candidate_k,
+                use_mmr=use_mmr,
+                lam=lam,
+                strategy=strategy,
+            )
+            resp["metrics"] = metrics
             return resp
 
+        # 2) expand + (optional) quota
         t1_0 = time.perf_counter()
         docs = self._expand_same_doc(q, docs, per_doc=2)
         t_expand_ms = (time.perf_counter() - t1_0) * 1000.0
@@ -322,75 +427,70 @@ class RagService:
             quota = {"요약": 2, "본문": 4}
             docs = self._quota_by_section(docs, quota, k)
 
+        # context
         context = self.build_context(docs)
         if not context:
+            total_ms = (time.perf_counter() - t_total0) * 1000.0
+            metrics = self._base_metrics(
+                k=k,
+                strategy=strategy,
+                use_reranker=bool(self._reranker),
+                retriever_ms=t_retr_ms,
+                expand_ms=t_expand_ms,
+                llm_ms=0.0,
+                total_ms=total_ms,
+                conf=conf,
+                docs=docs,
+                parser_mode=parser_mode,
+                parsed_query=parsed_q,
+            )
             resp = RAGQueryResponse(question=q, answer="관련 컨텍스트가 없습니다.", documents=[]).model_dump()
-            resp["metrics"] = {
-                "k": k,
-                "strategy": strategy,
-                "use_reranker": bool(self._reranker),
-                "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": round(t_expand_ms, 1),
-                "llm_ms": 0.0,
-                "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
-                "conf": round(conf, 4),
-                "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
-                "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-                "device": "cuda" if torch.cuda.is_available() else "cpu",
-                "retrieved": len(docs),
-            }
-            if eval_on:
-                regex_q = self._parse_query_regex(q)
-                llm_q = await self._parse_query_llm(q)
-                resp["metrics"]["query_parse_eval"] = {
-                    "regex": self._eval_query_metrics(
-                        regex_q,
-                        k=k,
-                        where=where,
-                        candidate_k=candidate_k,
-                        use_mmr=use_mmr,
-                        lam=lam,
-                        strategy=strategy,
-                    ),
-                    "llm": self._eval_query_metrics(
-                        llm_q,
-                        k=k,
-                        where=where,
-                        candidate_k=candidate_k,
-                        use_mmr=use_mmr,
-                        lam=lam,
-                        strategy=strategy,
-                    ),
-                }
+            await self._maybe_attach_query_parse_eval(
+                metrics,
+                original_q=q,
+                parsed_q=parsed_q,
+                parsed_mode=parser_mode,
+                k=k,
+                where=where,
+                candidate_k=candidate_k,
+                use_mmr=use_mmr,
+                lam=lam,
+                strategy=strategy,
+            )
+            resp["metrics"] = metrics
             return resp
 
+        # 3) answer generation
         prompt = self._render_prompt(q, context)
         messages = [
             {"role": "system", "content": "답변은 한국어. 제공된 컨텍스트만 사용. 모르면 모른다고 답하라."},
             {"role": "user", "content": prompt},
         ]
+
         try:
             t_llm0 = time.perf_counter()
             out = await self.chat(messages, max_tokens=max_tokens, temperature=temperature)
             t_llm_ms = (time.perf_counter() - t_llm0) * 1000.0
         except Exception as e:  # pragma: no cover
+            total_ms = (time.perf_counter() - t_total0) * 1000.0
+            metrics = self._base_metrics(
+                k=k,
+                strategy=strategy,
+                use_reranker=bool(self._reranker),
+                retriever_ms=t_retr_ms,
+                expand_ms=t_expand_ms,
+                llm_ms=0.0,
+                total_ms=total_ms,
+                conf=conf,
+                docs=docs,
+                parser_mode=parser_mode,
+                parsed_query=parsed_q,
+            )
             resp = RAGQueryResponse(question=q, answer=f"LLM 호출 실패: {e}", documents=[]).model_dump()
-            resp["metrics"] = {
-                "k": k,
-                "strategy": strategy,
-                "use_reranker": bool(self._reranker),
-                "retriever_ms": round(t_retr_ms, 1),
-                "expand_ms": round(t_expand_ms, 1),
-                "llm_ms": 0.0,
-                "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
-                "conf": round(conf, 4),
-                "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
-                "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-                "device": "cuda" if torch.cuda.is_available() else "cpu",
-                "retrieved": len(docs),
-            }
+            resp["metrics"] = metrics
             return resp
 
+        # 4) build response docs
         items: List[DocumentItem] = []
         space = self._last_space
         for d in docs:
@@ -409,51 +509,43 @@ class RagService:
                     url=meta.get("url"),
                     title=meta.get("title"),
                     section=meta.get("section"),
-                    seed=meta.get("seed_title")
-                    or meta.get("parent")
-                    or meta.get("title"),
+                    seed=meta.get("seed_title") or meta.get("parent") or meta.get("title"),
                     score=float(score) if score is not None else None,
                     text=text[:1200],
                 )
             )
+
+        total_ms = (time.perf_counter() - t_total0) * 1000.0
+        metrics = self._base_metrics(
+            k=k,
+            strategy=strategy,
+            use_reranker=bool(self._reranker),
+            retriever_ms=t_retr_ms,
+            expand_ms=t_expand_ms,
+            llm_ms=t_llm_ms,
+            total_ms=total_ms,
+            conf=conf,
+            docs=docs,  # NOTE: docs 기준으로 dup/conf 측정(기존과 동일)
+            parser_mode=parser_mode,
+            parsed_query=parsed_q,
+        )
+
+        await self._maybe_attach_query_parse_eval(
+            metrics,
+            original_q=q,
+            parsed_q=parsed_q,
+            parsed_mode=parser_mode,
+            k=k,
+            where=where,
+            candidate_k=candidate_k,
+            use_mmr=use_mmr,
+            lam=lam,
+            strategy=strategy,
+        )
+
         resp = RAGQueryResponse(question=q, answer=out, documents=items).model_dump()
-        resp["metrics"] = {
-            "k": k,
-            "strategy": strategy,
-            "use_reranker": bool(self._reranker),
-            "retriever_ms": round(t_retr_ms, 1),
-            "expand_ms": round(t_expand_ms, 1),
-            "llm_ms": round(t_llm_ms, 1),
-            "total_ms": round((time.perf_counter() - t_total0) * 1000.0, 1),
-            "conf": round(conf, 4),
-            "dup_rate_doc": dup_rate(keys_from_docs(docs, by="doc")),
-            "dup_rate_title": dup_rate(keys_from_docs(docs, by="title")),
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "retrieved": len(items),
-        }
-        if eval_on:
-            regex_q = self._parse_query_regex(q)
-            llm_q = await self._parse_query_llm(q)
-            resp["metrics"]["query_parse_eval"] = {
-                "regex": self._eval_query_metrics(
-                    regex_q,
-                    k=k,
-                    where=where,
-                    candidate_k=candidate_k,
-                    use_mmr=use_mmr,
-                    lam=lam,
-                    strategy=strategy,
-                ),
-                "llm": self._eval_query_metrics(
-                    llm_q,
-                    k=k,
-                    where=where,
-                    candidate_k=candidate_k,
-                    use_mmr=use_mmr,
-                    lam=lam,
-                    strategy=strategy,
-                ),
-            }
+        metrics["retrieved"] = len(items)  # 응답 문서 수는 items 기준이 더 직관적
+        resp["metrics"] = metrics
         return resp
 
 
