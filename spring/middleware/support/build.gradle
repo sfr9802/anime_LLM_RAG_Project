@@ -1,0 +1,6 @@
+dependencies {
+    api 'org.springframework.boot:spring-boot-starter-web'
+
+    // GlobalExceptionHandler uses JJWT exception types
+    implementation "io.jsonwebtoken:jjwt-api:${rootProject.ext.jjwtVersion}"
+}

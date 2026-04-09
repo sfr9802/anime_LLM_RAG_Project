@@ -1,1 +1,3 @@
 rootProject.name = 'arin'
+
+include 'arin-api', 'identity', 'proxy', 'support'

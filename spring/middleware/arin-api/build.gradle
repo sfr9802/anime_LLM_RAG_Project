@@ -1,0 +1,32 @@
+plugins {
+    id 'org.springframework.boot'
+}
+
+bootJar {
+    enabled = true
+    archiveFileName = 'app.jar'
+}
+jar { enabled = false }
+
+dependencies {
+    implementation project(':identity')
+    implementation project(':proxy')
+    implementation project(':support')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+
+    // Flyway
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // OpenAPI
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${rootProject.ext.springdocVersion}"
+
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+    testImplementation 'org.springframework.security:spring-security-test'
+}

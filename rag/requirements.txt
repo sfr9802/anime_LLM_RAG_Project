@@ -11,6 +11,7 @@ PyJWT==2.10.1
 # === Pydantic / Typing ===
 pydantic==2.11.7
 pydantic_core==2.33.2
+pydantic-settings==2.9.1
 typing_extensions==4.12.2
 typing-inspection==0.4.1
 

@@ -12,14 +12,14 @@ services:
       --ctx-size 8192
       --n-gpu-layers -1
     volumes:
-      - ./models:/models:ro       # 호스트 D:\port\models 에 모델 넣어라
+      - ./models:/models:ro
     ports:
       - "${LLM_PORT}:${LLM_PORT}"
     deploy:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu] # GPU 없으면 이 블럭 지워
+            - capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:${LLM_PORT}/v1/models"]
       interval: 10s
@@ -35,20 +35,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
-  mysql:
-    image: mysql:8
+
+  postgres:
+    image: postgres:16-alpine
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASS}
-      MYSQL_DATABASE: ${MYSQL_DB}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASS}
-    ports: ["${MYSQL_PORT}:3306"]
+      POSTGRES_DB: ${PG_DB:-arin}
+      POSTGRES_USER: ${PG_USER:-arin}
+      POSTGRES_PASSWORD: ${PG_PASS:-REDACTED}
+    ports: ["${PG_PORT:-5432}:5432"]
     volumes:
-      - mysql-data:/var/lib/mysql
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-arin}"]
+      interval: 5s
+      timeout: 3s
       retries: 30
 
   mongo:
@@ -74,13 +74,13 @@ services:
     env_file:
       - ./secrets/google-oauth.env
     build:
-      context: ./arin/arin
+      context: ./spring/middleware
       dockerfile: dockerfile
     depends_on:
-      llm:   { condition: service_healthy }
-      mysql: { condition: service_healthy }
-      mongo: { condition: service_healthy }
-      redis: { condition: service_healthy }   # ← 변경
+      llm:      { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      mongo:    { condition: service_healthy }
+      redis:    { condition: service_healthy }
     environment:
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATA_REDIS_HOST: redis
@@ -88,7 +88,7 @@ services:
       SPRING_DATA_REDIS_TIMEOUT: 2s
       APP_FRONT_ORIGIN: http://localhost
 
-      # JWT (양쪽 이름 맞춤)
+      # JWT
       JWT_SECRET: ${JWT_SECRET}
       JWT_SECRET_IS_BASE64: ${JWT_SECRET_B64}
       JWT_ISSUER: ${JWT_ISS}
@@ -96,28 +96,24 @@ services:
       JWT_EXPIRATION: 3600000
       JWT_REFRESH_EXPIRATION: 604800000
 
-      # Redis: host/port만 사용 (권장) ─ URL 항목 삭제
+      # Redis
       REDIS_HOST: redis
       REDIS_PORT: ${REDIS_PORT}
-      # SPRING_DATA_REDIS_URL: redis://redis:6379   # ← URL로 줄 거면 이 키로 (택1)
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DB}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
-      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
-      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASS}
+
+      # PostgreSQL
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${PG_DB:-arin}
+      SPRING_DATASOURCE_USERNAME: ${PG_USER:-arin}
+      SPRING_DATASOURCE_PASSWORD: ${PG_PASS:-REDACTED}
 
       # LLM
       LLM_BASE_URL: ${LLM_BASE_URL}
 
-      # Mongo: Spring이 진짜 쓸 때만 정확한 키로 (택1)
-      # SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/${MONGO_DB}?authSource=${MONGO_DB}
-      # MONGO_DB: ${MONGO_DB}  # 위 URI 쓰면 별도 필요 X
-
     ports: ["${SPRING_PORT}:8080"]
 
-
-  # === FastAPI (rag_demo) ===
+  # === FastAPI (rag) ===
   fastapi:
     build:
-      context: ./rag_demo
+      context: ./rag
       dockerfile: dockerfile
     depends_on:
       llm: { condition: service_healthy }
@@ -149,7 +145,7 @@ services:
       - hf-cache:/root/.cache/huggingface
     ports: ["${FASTAPI_PORT}:9000"]
     command: >
-      uvicorn app.app.main:app
+      uvicorn main:app
       --host 0.0.0.0
       --port 9000
       --workers 1
@@ -166,6 +162,6 @@ services:
 volumes:
   mongo-data:
   redis-data:
-  mysql-data:
+  postgres-data:
   chroma-data:
   hf-cache:
