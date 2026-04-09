@@ -57,10 +57,7 @@ jacoco*.exec
 node_modules/
 /node_modules/
 dist/
-.env
-.env.*
-!.env.local
-!.env.docker
+# .env files handled in Secrets section below
 
 # === Docker ===
 *.pid
@@ -82,3 +79,13 @@ __pycache__/
 /%HF_HOME
 /chroma_db/
 /chroma_db
+
+# === Models (GGUF, etc.) ===
+*.gguf
+*.bin
+*.safetensors
+
+# === Secrets ===
+secrets/
+*.env
+!.env.example
