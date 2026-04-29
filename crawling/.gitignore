@@ -1,0 +1,25 @@
+# Crawling-local gitignore. The parent ../.gitignore already excludes
+# *.json, *.jsonl, *.log, __pycache__, *.env, *.gguf, *.safetensors,
+# .idea, etc. — keep this file focused on crawling-specific paths.
+
+# --- Claude Code workspace (per user request) ---------------------------
+.claude/
+
+# --- Local crawler binaries / runtime artefacts -------------------------
+chromedriver.exe
+
+LOG/
+_json_fails/
+output_titles/
+
+# --- Large generated v4 corpus (regenerable from scripts) ---------------
+# The full migration directory holds ~550 MB of jsonl that
+# scripts.convert_namu_v3_to_v4 reproduces from namu_anime_v3.jsonl.
+eval/reports/namu-v4-migration/
+
+# --- Test cache ---------------------------------------------------------
+.pytest_cache/
+
+# --- Editor scratch -----------------------------------------------------
+.vscode/
+.idea/
