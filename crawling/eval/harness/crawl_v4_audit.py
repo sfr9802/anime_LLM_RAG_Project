@@ -21,7 +21,12 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .dataset_v4_schema import PAGE_TYPES, RELATIONS, SECTION_TYPES
+from .dataset_v4_schema import (
+    PAGE_TYPES,
+    RELATIONS,
+    SECTION_TYPES,
+    is_generic_title,
+)
 from .split_manifest import SPLIT_NAMES, SplitManifest
 
 
@@ -52,6 +57,13 @@ class AuditThresholds:
     work_title_missing_warn_ratio: float = 0.05
     query_rewrite_min_per_page: float = 0.20
     context_answer_skew_warn_ratio: float = 0.80
+    # Phase 5.1 — section heading preservation
+    min_mean_section_count: float = 1.5
+    summary_skew_warn_ratio: float = 0.90
+    blank_section_title_warn_ratio: float = 0.05
+    generic_section_title_warn_ratio: float = 0.80
+    min_distinct_section_depths: int = 2
+    section_title_top_n: int = 10
 
 
 # ---------------------------------------------------------------- helpers
@@ -91,6 +103,55 @@ def _duplicate_keys(values: Iterable[str]) -> List[str]:
     return sorted(k for k, c in counter.items() if c > 1)
 
 
+@dataclass
+class SectionTitleCount:
+    """One bucket in a section_title distribution.
+
+    Used both for top-N section titles in the page audit and for chunk
+    section_path frequency counts in the chunk audit. The string form is
+    the joined heading_path (``" > "`` separator), matching what
+    :func:`render_markdown` prints.
+    """
+
+    section_title: str
+    count: int
+
+
+def _coerce_path_list(value: Any) -> List[str]:
+    """Return a clean list of non-empty heading-path segments."""
+    if not isinstance(value, list):
+        return []
+    out: List[str] = []
+    for p in value:
+        if isinstance(p, str) and p.strip():
+            out.append(p.strip())
+    return out
+
+
+def _join_section_title(path: List[str]) -> str:
+    """Join a heading_path for display + grouping."""
+    return " > ".join(path) if path else ""
+
+
+def _is_blank_path(path: Any) -> bool:
+    """True when a heading_path is missing / empty / all-blank."""
+    return len(_coerce_path_list(path)) == 0
+
+
+def _is_generic_single_segment(path: List[str]) -> bool:
+    """True when the path is a single segment that matches a generic title.
+
+    Single-segment paths like ``["본문"]``, ``["요약"]``, ``["등장인물"]`` usually
+    indicate the converter fell back to a wholesale-extraction default rather
+    than preserving a real h2/h3 heading. Multi-segment paths (e.g.
+    ``["줄거리", "1기"]``) are never flagged here, since their depth shows real
+    structure was captured.
+    """
+    if len(path) != 1:
+        return False
+    return is_generic_title(path[0])
+
+
 # ---------------------------------------------------------------- page audit
 
 
@@ -110,6 +171,12 @@ class PageAudit:
     unknown_section_type_count: int = 0
     other_section_type_count: int = 0
     unsupported_section_type_ratio: float = 0.0
+    # Phase 5.1 — section heading preservation
+    sections_with_blank_title_count: int = 0
+    sections_with_generic_title_count: int = 0
+    section_depth_distribution: Dict[str, int] = field(default_factory=dict)
+    section_title_distribution: Dict[str, int] = field(default_factory=dict)
+    top_section_titles: List[SectionTitleCount] = field(default_factory=list)
 
 
 def audit_pages(
@@ -134,6 +201,10 @@ def audit_pages(
     unknown_section_count = 0
     other_section_count = 0
     total_sections = 0
+    sections_blank = 0
+    sections_generic = 0
+    depth_counter: Counter = Counter()
+    title_counter: Counter = Counter()
 
     for page in pages:
         if not isinstance(page, dict):
@@ -183,6 +254,23 @@ def audit_pages(
                     if stype == "other":
                         other_section_count += 1
                 total_sections += 1
+
+                # heading-path metrics (Phase 5.1)
+                raw_path = sec.get("heading_path")
+                cleaned_path = _coerce_path_list(raw_path)
+                if _is_blank_path(raw_path):
+                    sections_blank += 1
+                    title_counter["__blank__"] += 1
+                else:
+                    if _is_generic_single_segment(cleaned_path):
+                        sections_generic += 1
+                    title_counter[_join_section_title(cleaned_path)] += 1
+
+                depth = sec.get("depth")
+                if isinstance(depth, int):
+                    depth_counter[str(depth)] += 1
+                else:
+                    depth_counter["__missing__"] += 1
         else:
             section_counts.append(0)
 
@@ -192,6 +280,11 @@ def audit_pages(
         if total_sections > 0
         else 0.0
     )
+
+    top_titles = [
+        SectionTitleCount(section_title=t, count=c)
+        for t, c in title_counter.most_common(thresholds.section_title_top_n)
+    ]
 
     audit = PageAudit(
         total_pages=total_pages,
@@ -208,6 +301,11 @@ def audit_pages(
         unknown_section_type_count=unknown_section_count,
         other_section_type_count=other_section_count,
         unsupported_section_type_ratio=unsupported_ratio,
+        sections_with_blank_title_count=sections_blank,
+        sections_with_generic_title_count=sections_generic,
+        section_depth_distribution=dict(depth_counter),
+        section_title_distribution=dict(title_counter),
+        top_section_titles=top_titles,
     )
 
     # ---- warnings ------------------------------------------------------
@@ -256,6 +354,55 @@ def audit_pages(
             f"(unknown={unknown_section_count}, other={other_section_count}/{total_sections})"
         )
 
+    # ---- Phase 5.1 — section heading preservation -----------------------
+    if (
+        audit.section_count_stats.count > 0
+        and audit.section_count_stats.mean < thresholds.min_mean_section_count
+    ):
+        warnings.append(
+            f"pages: mean section_count {audit.section_count_stats.mean:.2f} "
+            f"< {thresholds.min_mean_section_count:.2f} — extraction likely "
+            f"collapsed h2/h3 structure into a single body section"
+        )
+    if total_sections > 0:
+        summary_count = section_types.get("summary", 0)
+        summary_ratio = summary_count / total_sections
+        if summary_ratio > thresholds.summary_skew_warn_ratio:
+            warnings.append(
+                f"pages: section_type 'summary' owns {summary_count}/{total_sections} "
+                f"sections ({summary_ratio:.2%} > "
+                f"{thresholds.summary_skew_warn_ratio:.0%}) — section_type "
+                f"classification is collapsed onto summary"
+            )
+        blank_ratio = sections_blank / total_sections
+        if blank_ratio > thresholds.blank_section_title_warn_ratio:
+            warnings.append(
+                f"pages: {sections_blank}/{total_sections} sections "
+                f"({blank_ratio:.2%}) have blank heading_path "
+                f"(> {thresholds.blank_section_title_warn_ratio:.0%}) — "
+                f"section heading text was not preserved"
+            )
+        generic_ratio = sections_generic / total_sections
+        if generic_ratio > thresholds.generic_section_title_warn_ratio:
+            warnings.append(
+                f"pages: {sections_generic}/{total_sections} sections "
+                f"({generic_ratio:.2%}) are single-segment generic titles "
+                f"like '본문'/'요약' (> {thresholds.generic_section_title_warn_ratio:.0%}) — "
+                f"likely wholesale-fallback extraction without real h2/h3 split"
+            )
+        # Distinct depth count (excluding the synthetic '__missing__' bucket).
+        distinct_real_depths = sum(
+            1
+            for k, v in depth_counter.items()
+            if k != "__missing__" and v > 0
+        )
+        if distinct_real_depths < thresholds.min_distinct_section_depths:
+            warnings.append(
+                f"pages: only {distinct_real_depths} distinct section depth(s) observed "
+                f"(< {thresholds.min_distinct_section_depths}) — h2/h3 nesting is missing, "
+                f"every section is at the same depth"
+            )
+
     return audit, warnings
 
 
@@ -289,6 +436,9 @@ class ChunkAudit:
     is_list_like_ratio: float = 0.0
     section_type_chunk_counts: Dict[str, int] = field(default_factory=dict)
     top_work_skew: List[WorkChunkSkew] = field(default_factory=list)
+    # Phase 5.1 — heading preservation at the chunk level
+    chunks_with_blank_section_title_count: int = 0
+    chunks_by_section_title_top_n: List[SectionTitleCount] = field(default_factory=list)
 
 
 def audit_chunks(
@@ -314,6 +464,8 @@ def audit_chunks(
     is_list = 0
     missing_doc = 0
     missing_section = 0
+    blank_section_title = 0
+    chunk_title_counter: Counter = Counter()
     section_type_counts: Counter = Counter()
     work_chunk_counts: Counter = Counter()
     work_titles: Dict[str, str] = {}
@@ -330,6 +482,14 @@ def audit_chunks(
         section_id = chunk.get("section_id")
         if not isinstance(section_id, str) or not section_id.strip():
             missing_section += 1
+        section_path_raw = chunk.get("section_path")
+        if _is_blank_path(section_path_raw):
+            blank_section_title += 1
+            chunk_title_counter["__blank__"] += 1
+        else:
+            chunk_title_counter[
+                _join_section_title(_coerce_path_list(section_path_raw))
+            ] += 1
         text = chunk.get("chunk_text") or ""
         if isinstance(text, str):
             length = len(text)
@@ -378,6 +538,11 @@ def audit_chunks(
         for wid, cnt in top_skew_raw
     ]
 
+    top_chunk_titles = [
+        SectionTitleCount(section_title=t, count=c)
+        for t, c in chunk_title_counter.most_common(thresholds.section_title_top_n)
+    ]
+
     audit = ChunkAudit(
         total_chunks=total,
         duplicate_chunk_ids=_duplicate_keys(chunk_ids),
@@ -396,6 +561,8 @@ def audit_chunks(
         is_list_like_ratio=(is_list / total) if total > 0 else 0.0,
         section_type_chunk_counts=dict(section_type_counts),
         top_work_skew=top_work_skew,
+        chunks_with_blank_section_title_count=blank_section_title,
+        chunks_by_section_title_top_n=top_chunk_titles,
     )
 
     # ---- warnings ------------------------------------------------------
@@ -429,6 +596,15 @@ def audit_chunks(
                 f"chunks: top work {worst.work_title or worst.work_id!r} owns "
                 f"{worst.chunk_count}/{total} chunks ({worst.ratio:.2%} > "
                 f"{thresholds.work_skew_warn_ratio:.0%}) — corpus is skewed"
+            )
+    if total > 0:
+        chunk_blank_ratio = blank_section_title / total
+        if chunk_blank_ratio > thresholds.blank_section_title_warn_ratio:
+            warnings.append(
+                f"chunks: {blank_section_title}/{total} chunks "
+                f"({chunk_blank_ratio:.2%}) have blank section_path "
+                f"(> {thresholds.blank_section_title_warn_ratio:.0%}) — "
+                f"section heading was lost between page export and chunk export"
             )
 
     return audit, warnings
@@ -779,6 +955,19 @@ def render_markdown(report: CrawlV4AuditReport) -> str:
         f"{p.unsupported_section_type_ratio:.2%} "
         f"(unknown={p.unknown_section_type_count}, other={p.other_section_type_count})"
     )
+    lines.append(
+        f"- sections_with_blank_title: {p.sections_with_blank_title_count}, "
+        f"sections_with_generic_title: {p.sections_with_generic_title_count}"
+    )
+    if p.section_depth_distribution:
+        depth_repr = ", ".join(
+            f"{k}={v}"
+            for k, v in sorted(
+                p.section_depth_distribution.items(),
+                key=lambda kv: (kv[0] == "__missing__", kv[0]),
+            )
+        )
+        lines.append(f"- section_depth distribution: {depth_repr}")
     lines.append("")
     lines.append("### page_type distribution")
     for k, v in sorted(p.page_type_distribution.items(), key=lambda kv: -kv[1]):
@@ -788,6 +977,12 @@ def render_markdown(report: CrawlV4AuditReport) -> str:
     for k, v in sorted(p.section_type_distribution.items(), key=lambda kv: -kv[1]):
         lines.append(f"- {k}: {v}")
     lines.append("")
+    if p.top_section_titles:
+        lines.append("### top section titles")
+        for entry in p.top_section_titles:
+            label = entry.section_title or "(blank)"
+            lines.append(f"- {label}: {entry.count}")
+        lines.append("")
 
     # Chunks ------------------------------------------------------------
     lines.append("## Chunks")
@@ -813,6 +1008,9 @@ def render_markdown(report: CrawlV4AuditReport) -> str:
             f"- duplicate chunk_ids ({len(c.duplicate_chunk_ids)}): "
             f"{c.duplicate_chunk_ids[:5]}"
         )
+    lines.append(
+        f"- chunks_with_blank_section_title: {c.chunks_with_blank_section_title_count}"
+    )
     lines.append("")
     lines.append("### top work skew")
     for w in c.top_work_skew:
@@ -823,6 +1021,12 @@ def render_markdown(report: CrawlV4AuditReport) -> str:
     for k, v in sorted(c.section_type_chunk_counts.items(), key=lambda kv: -kv[1]):
         lines.append(f"- {k}: {v}")
     lines.append("")
+    if c.chunks_by_section_title_top_n:
+        lines.append("### chunks by section_title (top)")
+        for entry in c.chunks_by_section_title_top_n:
+            label = entry.section_title or "(blank)"
+            lines.append(f"- {label}: {entry.count}")
+        lines.append("")
 
     # Manifest ---------------------------------------------------------
     if report.manifest is not None:

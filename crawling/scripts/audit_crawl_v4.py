@@ -76,6 +76,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument(
         "--no-json", action="store_true", help="skip writing the .json report"
     )
+    p.add_argument(
+        "--fail-on-warning",
+        action="store_true",
+        help=(
+            "exit with status 1 when the audit report contains one or more "
+            "warnings. JSON / Markdown reports are still written before exit "
+            "so a CI step can read them on failure."
+        ),
+    )
 
     # Threshold overrides
     th = AuditThresholds()
@@ -115,6 +124,37 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--context-answer-skew-warn-ratio",
         type=float,
         default=th.context_answer_skew_warn_ratio,
+    )
+    # Phase 5.1 — heading preservation knobs
+    p.add_argument(
+        "--min-mean-section-count",
+        type=float,
+        default=th.min_mean_section_count,
+    )
+    p.add_argument(
+        "--summary-skew-warn-ratio",
+        type=float,
+        default=th.summary_skew_warn_ratio,
+    )
+    p.add_argument(
+        "--blank-section-title-warn-ratio",
+        type=float,
+        default=th.blank_section_title_warn_ratio,
+    )
+    p.add_argument(
+        "--generic-section-title-warn-ratio",
+        type=float,
+        default=th.generic_section_title_warn_ratio,
+    )
+    p.add_argument(
+        "--min-distinct-section-depths",
+        type=int,
+        default=th.min_distinct_section_depths,
+    )
+    p.add_argument(
+        "--section-title-top-n",
+        type=int,
+        default=th.section_title_top_n,
     )
 
     return p.parse_args(argv)
@@ -165,6 +205,12 @@ def main(argv=None) -> int:
         work_title_missing_warn_ratio=args.work_title_missing_warn_ratio,
         query_rewrite_min_per_page=args.query_rewrite_min_per_page,
         context_answer_skew_warn_ratio=args.context_answer_skew_warn_ratio,
+        min_mean_section_count=args.min_mean_section_count,
+        summary_skew_warn_ratio=args.summary_skew_warn_ratio,
+        blank_section_title_warn_ratio=args.blank_section_title_warn_ratio,
+        generic_section_title_warn_ratio=args.generic_section_title_warn_ratio,
+        min_distinct_section_depths=args.min_distinct_section_depths,
+        section_title_top_n=args.section_title_top_n,
     )
 
     report = run_full_audit(
@@ -207,6 +253,12 @@ def main(argv=None) -> int:
         print(f"wrote: {json_path}")
     if not args.no_markdown:
         print(f"wrote: {md_path}")
+    if args.fail_on_warning and report.warnings:
+        print(
+            f"--fail-on-warning: {len(report.warnings)} warning(s) — exiting non-zero",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

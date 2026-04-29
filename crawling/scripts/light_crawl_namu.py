@@ -1,19 +1,41 @@
-"""Light-weight namu.wiki crawler for Phase 5 audit demos.
+"""Light-weight namu.wiki crawler for Phase 5 audit *demos only*.
 
-Pulls a small list of seed pages (~10) over plain HTTPS — no Selenium,
-no DB, no multiprocessing. The output is a v3-rich JSONL compatible
-with ``scripts.convert_namu_v3_to_v4`` so the full pipeline can run on
-fresh data:
+================================================================
+                ⚠  DEMO / SMOKE-TEST CRAWLER  ⚠
+================================================================
+
+DO NOT USE THIS SCRIPT FOR PRODUCTION RE-CRAWLS OR DATASET GENERATION.
+
+This script exists so the audit harness can be exercised on a tiny
+corpus (~10 pages) without standing up Selenium / MySQL / MongoDB. It
+deliberately skips most of what makes ``crawl_namu.py`` correct:
+
+    * No character/subpage link discovery — every page is a flat root.
+    * No multi-process workers / no DB persistence.
+    * Section extraction is a single-pass h2 walk with a wholesale-body
+      fallback. **All pages tend to collapse to one ``본문`` section**,
+      which is why the audit harness will (correctly) flag the demo
+      output:
+          - mean section_count < 1.5  (Phase 5.1 warning)
+          - section_type 100% summary (Phase 5.1 summary skew warning)
+          - generic single-segment heading (Phase 5.1 heading warning)
+      Those warnings are expected on this script's output and do **not**
+      reflect a bug in the audit code.
+    * Section heading fidelity is intentionally low; section_type
+      classification will collapse onto ``summary``.
+
+Use ``crawl_namu.py`` for production re-crawls. The Phase 5.1 wrapper
+``scripts.run_namu_crawl_v4_pipeline`` consumes the v3 JSONL produced by
+``crawl_namu.py``; pointing it at ``light_crawl_namu`` output will fail
+the audit gate (``--fail-on-warning``) and that is the intended
+behaviour, not a regression.
+
+Pipeline order (when this script is used purely as a smoke fixture)::
 
     light_crawl_namu --> convert_namu_v3_to_v4 --> export_rag_chunks
         --> build_split_manifest --> build_sft_datasets --> audit_crawl_v4
 
-This script is *not* a replacement for ``crawl_namu.py`` — it skips
-character link discovery, subpage recursion, multi-process workers, and
-DB persistence. It exists so a 10-page audit smoke can be run from a
-clean checkout without standing up the full crawler stack.
-
-Usage::
+Usage (demo only)::
 
     python -m scripts.light_crawl_namu \\
         --seeds 귀멸의 칼날 \\
@@ -263,8 +285,13 @@ def _load_seeds(args: argparse.Namespace) -> List[str]:
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Lightweight namu.wiki crawler. Outputs v3-rich JSONL for the "
-            "Phase 5 audit demo. Use crawl_namu.py for production crawls."
+            "DEMO-ONLY lightweight namu.wiki crawler. Output is v3-rich "
+            "JSONL intended for the Phase 5 audit harness smoke test. "
+            "Section extraction is intentionally low-fidelity (every page "
+            "tends to collapse to a single body section) so output of "
+            "this script SHOULD trigger Phase 5.1 audit warnings such as "
+            "'mean section_count < 1.5' and 'summary section_type owns "
+            "100%'. Use crawl_namu.py for production crawls."
         )
     )
     p.add_argument(
