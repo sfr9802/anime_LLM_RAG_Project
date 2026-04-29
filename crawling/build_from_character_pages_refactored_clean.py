@@ -27,7 +27,7 @@ def setup_logging(debug: bool) -> None:
 
 # ------------------------- ENV (Mongo / Vector) -------------------------
 # --- Mongo ---
-MONGO_URI       = os.getenv("MONGO_URI", "mongodb://REDACTED:REDACTED@localhost:27017/clean_namu_crawl?authSource=clean_namu_crawl")
+MONGO_URI       = os.getenv("MONGO_URI", "mongodb://localhost:27017/clean_namu_crawl")
 MONGO_DB        = os.getenv("MONGO_DB", "clean_namu_crawl")
 MONGO_RAW_COL   = os.getenv("MONGO_RAW_COL", "pages")
 MONGO_CHUNK_COL = os.getenv("MONGO_CHUNK_COL", "chunks")

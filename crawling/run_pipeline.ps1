@@ -22,7 +22,7 @@ param(
   [switch] $FromMongo,                                  # JSONL 대신 Mongo에서 export할지
 
   # Mongo 설정 (env 우선, 없으면 기본값)
-  [string] $MongoUri       = $(if ($env:MONGO_URI)       { $env:MONGO_URI }       else { "mongodb://REDACTED:REDACTED@localhost:27017/clean_namu_crawl?authSource=clean_namu_crawl" }),
+  [string] $MongoUri       = $(if ($env:MONGO_URI)       { $env:MONGO_URI }       else { "mongodb://localhost:27017/clean_namu_crawl" }),
   [string] $MongoDb        = $(if ($env:MONGO_DB)        { $env:MONGO_DB }        else { "clean_namu_crawl" }),
   [string] $MongoRawCol    = $(if ($env:MONGO_RAW_COL)   { $env:MONGO_RAW_COL }   else { "pages" }),
   [string] $MongoChunkCol  = $(if ($env:MONGO_CHUNK_COL) { $env:MONGO_CHUNK_COL } else { "chunks" }),

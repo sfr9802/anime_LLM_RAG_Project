@@ -30,20 +30,31 @@ if not DRIVER_PATH:
     raise RuntimeError("chromedriver executable not found. Install it or set CHROME_DRIVER_PATH.")
 
 # === 설정 ===
-NUM_WORKERS    = 12
+# DB 자격증명은 환경변수에서만 읽는다. 기본값에 비밀번호를 박지 않으며,
+# DB 모드(NO_DB=0)에서 환경변수가 비어 있으면 init_db_pools가 명시적으로 실패한다.
+NUM_WORKERS    = int(os.getenv('CRAWL_WORKERS', '12'))
 MAX_DEPTH      = 2
 MIN_CHUNK_LEN  = 50
 BASE_URL       = "https://namu.wiki"
-MONGO_DB       = 'namu_crawl'
-MONGO_URI      = f"mongodb://REDACTED:REDACTED@localhost:27017/{MONGO_DB}?authSource={MONGO_DB}"
+MONGO_DB       = os.getenv('CRAWL_MONGO_DB', 'namu_crawl')
+MONGO_URI      = os.getenv('MONGO_URI') or f"mongodb://localhost:27017/{MONGO_DB}"
 MYSQL_CONFIG   = {
-    'user': 'arin',
-    'password': 'REDACTED',
-    'host': 'localhost',
-    'database': 'namu_crawl',
-    'charset': 'utf8mb4',
-    'collation': 'utf8mb4_unicode_ci'
+    'user':       os.getenv('CRAWL_MYSQL_USER', 'namu_crawl'),
+    'password':   os.getenv('CRAWL_MYSQL_PASSWORD', ''),
+    'host':       os.getenv('CRAWL_MYSQL_HOST', 'localhost'),
+    'database':   os.getenv('CRAWL_MYSQL_DATABASE', MONGO_DB),
+    'charset':    'utf8mb4',
+    'collation':  'utf8mb4_unicode_ci',
 }
+# 파일 출력 전용 모드: DB 호출 스킵
+NO_DB          = os.getenv('CRAWL_NO_DB', '1') == '1'
+OUTPUT_FILE    = os.getenv('CRAWL_OUTPUT', 'crawled_pages.jsonl')
+SEED_FILE      = os.getenv('CRAWL_SEED', 'seed_titles.json')
+# 본문 길이 임계값: 추출된 본문이 이보다 짧으면 빈/리캡차 stub으로 간주하고 entry 생성 안 함
+MIN_PAGE_LEN   = int(os.getenv('CRAWL_MIN_PAGE_LEN', '500'))
+# extract_child_links가 빈 리스트일 때 <candidate>/<keyword> URL을 직접 시도(기본 ON).
+# 비용: 시드당 candidates * 6 keywords 만큼 추가 fetch. 끄려면 '0'.
+PROBE_SUBPAGES = os.getenv('CRAWL_PROBE_SUBPAGES', '1') == '1'
 
 # === 등장인물 섹션 키워드 (한글/영어) ===
 CHAR_SECTION_KEYWORDS = ["등장인물", "캐릭터", "character"]
@@ -227,47 +238,84 @@ def test_mongo_connectivity():
         import traceback; traceback.print_exc()
         
 # === 크롤러 및 헬퍼 함수 ===
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+)
+
+def make_chrome_driver() -> webdriver.Chrome:
+    """봇 탐지/리캡차 회피용 stealth 옵션이 적용된 Chrome 드라이버."""
+    opts = Options()
+    opts.add_argument('--headless=new')
+    opts.add_argument('--no-sandbox')
+    opts.add_argument('--disable-dev-shm-usage')
+    opts.add_argument('--disable-blink-features=AutomationControlled')
+    opts.add_argument(f'--user-agent={USER_AGENT}')
+    opts.add_argument('--lang=ko-KR')
+    opts.add_argument('--window-size=1280,900')
+    opts.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
+    opts.add_experimental_option('useAutomationExtension', False)
+    opts.add_argument('--disable-background-networking')
+    opts.add_argument('--disable-client-side-phishing-detection')
+    opts.add_argument('--disable-default-apps')
+    opts.add_argument('--disable-gcm')
+    opts.add_argument('--disable-sync')
+    opts.add_argument('--metrics-recording-only')
+
+    service = Service(executable_path=DRIVER_PATH, log_path=os.devnull)
+    driver = webdriver.Chrome(service=service, options=opts)
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"},
+        )
+    except Exception as e:
+        logger.warning(f"CDP webdriver mask failed: {e}")
+    return driver
+
 def init_worker(shared_visited):
     global _worker_driver, VISITED
     VISITED = shared_visited
     try:
-        opts = Options()
-        opts.add_argument('--headless')
-        opts.add_argument('--no-sandbox')
-        opts.add_argument('--disable-dev-shm-usage')
-        opts.add_experimental_option('excludeSwitches', ['enable-logging'])
-        opts.add_argument('--disable-background-networking')
-        opts.add_argument('--disable-client-side-phishing-detection')
-        opts.add_argument('--disable-default-apps')
-        opts.add_argument('--disable-gcm')
-        opts.add_argument('--disable-sync')
-        opts.add_argument('--metrics-recording-only')
-        opts.add_argument('--disable-features=NetworkService,NetworkServiceInProcess')
-
-        service = Service(executable_path=DRIVER_PATH, log_path=os.devnull)
-        _worker_driver = webdriver.Chrome(service=service, options=opts)
+        _worker_driver = make_chrome_driver()
         logging.getLogger('selenium').setLevel(logging.CRITICAL)
         logger.info(f"Worker driver initialized for process {os.getpid()}")
     except Exception as e:
         logger.error(f"Worker driver init failed: {e}")
         raise
 
-def fetch_soup(url: str) -> BS:
-    try:
-        _worker_driver.get(url)
-        time.sleep(random.uniform(1, 3))
+def fetch_soup(url: str) -> Tuple[BS, str]:
+    """페이지를 로드하고 (soup, 최종 URL)을 반환.
+    최종 URL은 selenium이 따라간 redirect 후 URL이라 호출자가 별칭/리다이렉트를 감지할 수 있다.
+    """
+    last_err = None
+    for attempt in range(2):
         try:
-            toggles = _worker_driver.find_elements(By.XPATH, "//dt[contains(text(),'펼치기')]")[:5]
-            for toggle in toggles:
-                _worker_driver.execute_script("arguments[0].scrollIntoView(true);", toggle)
-                toggle.click()
-                time.sleep(0.2)
-        except:
-            pass
-        return BS(_worker_driver.page_source, 'html.parser')
-    except Exception as e:
-        logger.error(f"Error fetching {url}: {e}")
-        raise
+            _worker_driver.get(url)
+            time.sleep(random.uniform(2.0, 4.0))
+            try:
+                toggles = _worker_driver.find_elements(By.XPATH, "//dt[contains(text(),'펼치기')]")[:5]
+                for toggle in toggles:
+                    _worker_driver.execute_script("arguments[0].scrollIntoView(true);", toggle)
+                    toggle.click()
+                    time.sleep(0.2)
+            except Exception:
+                pass
+            return BS(_worker_driver.page_source, 'html.parser'), _worker_driver.current_url
+        except Exception as e:
+            last_err = e
+            logger.error(f"Error fetching {url} (try {attempt+1}/2): {e}")
+            time.sleep(2.0)
+    if last_err:
+        raise last_err
+    return BS(_worker_driver.page_source, 'html.parser'), _worker_driver.current_url
+
+
+def _normalize_url(u: str) -> str:
+    """비교용 URL 정규화: 앵커/쿼리 제거, 트레일링 슬래시 제거."""
+    p = urlparse(u)
+    path = p.path.rstrip('/')
+    return urlunparse((p.scheme, p.netloc, path, '', '', ''))
 
 def remove_noise(soup: BS):
     for sel in ['aside','script','footer','header','nav','div[class*="ad"]','iframe']:
@@ -337,27 +385,92 @@ def clean_title(raw: str) -> str:
     text = unquote(raw)
     return re.sub(r"\([^)]*\)$", "", text).strip()
 
+def _category_prefixes(soup: BS) -> set:
+    """페이지 분류(카테고리) 링크에서 슬래시 앞 prefix 토큰을 추출.
+    redirect 별칭 시드(예: 짱구는 못말려)에서 정식 명칭(예: 크레용 신짱)을
+    candidates에 자동 보강하기 위함.
+    예) /w/분류:크레용 신짱/미디어 믹스  -> '크레용 신짱'
+        /w/분류:일본 애니메이션/2026년 -> '일본 애니메이션'(무해, 매칭 실패)
+    """
+    prefixes: set = set()
+    for a in soup.find_all('a', href=True):
+        href = clean_href(a.get('href', ''))
+        if not href.startswith('/w/'):
+            continue
+        path = unquote(href[len('/w/'):])
+        if not path.startswith('분류:'):
+            continue
+        body = path[len('분류:'):]
+        if '/' not in body:
+            continue
+        head = body.split('/', 1)[0].strip()
+        if len(head) >= 2:
+            prefixes.add(head)
+    return prefixes
+
+
+def _seed_candidates(seed: str, soup: BS) -> set:
+    """sub-page 매칭에 쓸 시드 후보 토큰 집합:
+    원본, disambig suffix 제거, og:title/og:url canonical, 분류 prefix를 모두 포함.
+    """
+    candidates = {seed, clean_title(seed)}
+    for prop in ('og:title', 'og:url'):
+        m = soup.find('meta', property=prop)
+        if not m or not m.has_attr('content'):
+            continue
+        v = m['content'].strip()
+        if prop == 'og:url' and '/w/' in v:
+            v = unquote(v.split('/w/', 1)[-1])
+        if v:
+            candidates.add(v)
+            candidates.add(clean_title(v))
+    candidates |= _category_prefixes(soup)
+    return {c for c in candidates if c}
+
+SUBPAGE_KEYWORDS = ["등장인물", "줄거리", "설정", "회차", "방영", "평가"]
+
+
 def extract_child_links(soup: BS, seed: str) -> List[Tuple[str, str]]:
-    """
-    '줄거리', '설정', '회차', '방영', '평가' 섹션 링크를 추출합니다.
-    정확히 seed/{section} 형태의 링크만 포함하며, fallback을 제거합니다.
-    """
-    keywords = ["등장인물", "줄거리", "설정", "회차", "방영", "평가"]
+    """seed 또는 그 canonical/base 토큰 + 섹션 키워드 형태의 sub-page 링크 추출."""
+    candidates = _seed_candidates(seed, soup)
     childs: List[Tuple[str, str]] = []
+    seen_paths = set()
     for a in soup.find_all('a', href=True):
         href = clean_href(a['href'])
         if not href.startswith('/w/'):
             continue
-        raw_path = href[len('/w/'):]
-        decoded = unquote(raw_path)
+        decoded = unquote(href[len('/w/'):])
         parts = decoded.split('/')
         if len(parts) != 2:
             continue
         name, section = parts
-        if name == seed and section in keywords:
-            childs.append((section, urljoin(BASE_URL, href)))
-    logger.info(f"extract_child_links for seed={seed} -> {childs}")
+        if section not in SUBPAGE_KEYWORDS or name not in candidates:
+            continue
+        if href in seen_paths:
+            continue
+        seen_paths.add(href)
+        childs.append((section, urljoin(BASE_URL, href)))
+    logger.info(f"extract_child_links seed={seed} candidates={sorted(candidates)} -> {childs}")
     return childs
+
+
+def _probe_subpage_urls(soup: BS, seed: str) -> List[Tuple[str, str]]:
+    """3-B: extract_child_links가 비어 있을 때 <candidate>/<keyword> 형태의 URL을
+    직접 구성해 sections로 반환. 실제 fetch는 일반 crawl_recursive 경로로 위임되어
+    redirect / 본문 길이 검증을 통해 자동 skip된다.
+    """
+    candidates = _seed_candidates(seed, soup)
+    out: List[Tuple[str, str]] = []
+    seen = set()
+    for cand in candidates:
+        for kw in SUBPAGE_KEYWORDS:
+            path = f"{cand}/{kw}"
+            url = f"{BASE_URL}/w/{quote(path)}"
+            if url in seen:
+                continue
+            seen.add(url)
+            out.append((kw, url))
+    return out
 
 def is_character_page(soup: BS, url: str = None) -> bool:
     """페이지가 캐릭터 관련 페이지인지 확인합니다."""
@@ -380,74 +493,46 @@ def is_character_page(soup: BS, url: str = None) -> bool:
     
     return False
 
+_TITLE_PREFIX_BLOCK = ('파일:', '분류:', '틀:', '나무위키:', '사용자:', '특수기능:')
+
+def _collect_single_token_links(scope: BS) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    for a in scope.find_all('a', href=True):
+        href = clean_href(a.get('href', ''))
+        if not href.startswith('/w/'):
+            continue
+        path = href.split('/w/', 1)[-1]
+        if '/' in path or ':' in path:
+            continue
+        title = clean_title(path)
+        if len(title) < 2 or title.startswith(_TITLE_PREFIX_BLOCK):
+            continue
+        out.append((title, urljoin(BASE_URL, href)))
+    return out
+
 def extract_character_links(soup: BS) -> List[Tuple[str, str]]:
-    """등장인물 페이지에서 캐릭터 링크를 추출합니다."""
+    """등장인물 페이지에서 캐릭터 링크를 구조적으로 추출합니다.
+    해시 클래스(예: 빌드마다 회전하는 obfuscated CSS class)에 의존하지 않습니다.
+    """
+    is_char = is_character_page(soup)
+
     chars: List[Tuple[str, str]] = []
-    
-    if not is_character_page(soup):
-        logger.info("Not a character page based on category, limiting extraction")
-        
-        detail_links = soup.find_all('a', class_='pJUgH6Pv')
-        for link in detail_links:
-            href = link.get('href', '')
-            if href.startswith('/w/'):
-                href = clean_href(href)
-                title = clean_title(href.split('/w/')[-1])
-                if title and len(title) >= 2:
-                    chars.append((title, urljoin(BASE_URL, href)))
-        
-        seen = set()
-        unique_chars: List[Tuple[str, str]] = []
-        for title, link in chars:
-            if title not in seen:
-                seen.add(title)
-                unique_chars.append((title, link))
-        
-        logger.info(f"Limited extraction: Found {len(unique_chars)} links")
-        return unique_chars
-    
-    logger.info("Confirmed character page, performing full extraction")
-    
-    detail_links = soup.find_all('a', class_='pJUgH6Pv')
-    for link in detail_links:
-        href = link.get('href', '')
-        if href.startswith('/w/'):
-            href = clean_href(href)
-            title = clean_title(href.split('/w/')[-1])
-            if title and len(title) >= 2:
-                chars.append((title, urljoin(BASE_URL, href)))
-    
     for td in soup.find_all('td'):
-        for a in td.find_all('a', href=True):
-            href = a.get('href', '')
-            if href.startswith('/w/'):
-                href = clean_href(href)
-                path_part = href.split('/w/')[-1]
-                if '/' in path_part:
-                    continue
-                title = clean_title(path_part)
-                if title and len(title) >= 2:
-                    chars.append((title, urljoin(BASE_URL, href)))
-    
-    for a in soup.find_all('a', href=True):
-        href = a.get('href', '')
-        if href.startswith('/w/'):
-            href = clean_href(href)
-            path_part = href.split('/w/')[-1]
-            if '/' in path_part or ':' in path_part:
-                continue
-            title = clean_title(path_part)
-            if title and len(title) >= 2 and not title.startswith(('파일:', '분류:', '틀:')):
-                chars.append((title, urljoin(BASE_URL, href)))
-    
-    seen = set()
-    unique_chars: List[Tuple[str, str]] = []
+        chars.extend(_collect_single_token_links(td))
+
+    if is_char:
+        chars.extend(_collect_single_token_links(soup))
+
+    seen, unique_chars = set(), []
     for title, link in chars:
         if title not in seen:
             seen.add(title)
             unique_chars.append((title, link))
-    
-    logger.info(f"Full extraction: Found {len(unique_chars)} character links")
+
+    logger.info(
+        f"{'Full' if is_char else 'Limited'} extraction: "
+        f"Found {len(unique_chars)} character links"
+    )
     return unique_chars
 
 def extract_chunks(text: str, min_len=MIN_CHUNK_LEN, max_len=300) -> List[str]:
@@ -494,17 +579,37 @@ def crawl_recursive(
             seed = title
 
         logger.info(f"Crawling: {title} (depth={depth}, url={url})")
-        soup = fetch_soup(url)
+        soup, final_url = fetch_soup(url)
         pages: List[Dict] = []
+
+        # redirect 감지: depth>0에서 sub-page URL이 다른 페이지로 redirect됐다면
+        # 콘텐츠가 요청 의도와 어긋난 것이므로 entry 생성 안 함(시드와 중복/오염 방지).
+        sub_redirected = False
+        if depth > 0 and _normalize_url(final_url) != _normalize_url(url):
+            logger.info(f"Sub-page redirect skip (depth={depth}): {url} -> {final_url}")
+            VISITED[final_url] = True
+            sub_redirected = True
 
         # 본문 추출 및 검증
         raw = extract_best_div(soup)
-        logger.info(f"Extracted text length: {len(raw) if raw else 0}")
-        
-        if raw:
+        raw_len = len(raw) if raw else 0
+        logger.info(f"Extracted text length: {raw_len}")
+
+        if sub_redirected:
+            logger.warning(
+                f"Skip entry for {title} (depth={depth}): redirected away from requested sub-page"
+            )
+        elif raw_len < MIN_PAGE_LEN:
+            # 빈 stub / reCAPTCHA 페이지로 간주: entry 생성 안 함.
+            # depth 0이면 sub-link 탐색은 계속 진행(redirect/카테고리 prefix를 통해 sub-page를 잡을 수도 있음).
+            logger.warning(
+                f"Skip entry for {title} (depth={depth}): body too short "
+                f"({raw_len} < MIN_PAGE_LEN={MIN_PAGE_LEN})"
+            )
+        else:
             chunks = extract_chunks(raw)
             logger.info(f"Generated chunks: {len(chunks)}")
-            
+
             if chunks:
                 entry = {
                     'title': title,
@@ -525,13 +630,16 @@ def crawl_recursive(
                 pages.append(entry)
             else:
                 logger.warning(f"No chunks generated for {title}")
-        else:
-            logger.warning(f"No content extracted for {title}")
 
         # 하위 링크 처리
         if depth == 0:
             sections = extract_child_links(soup, seed)
             logger.info(f"Seed sections for {seed}: {len(sections)} found - {[s[0] for s in sections]}")
+            # 3-B: extract_child_links가 비었을 때 <candidate>/<keyword> URL을 직접 시도.
+            # CRAWL_PROBE_SUBPAGES=1일 때만 활성. redirect/짧은 본문은 sub_redirected/MIN_PAGE_LEN으로 자동 skip.
+            if not sections and PROBE_SUBPAGES:
+                sections = _probe_subpage_urls(soup, seed)
+                logger.info(f"Probe-fallback for {seed}: {len(sections)} URL(s) constructed")
             for sec_title, sec_url in sections:
                 try:
                     sub_pages = crawl_recursive(sec_title, sec_url, 1, title, seed)
@@ -581,13 +689,16 @@ def save_pages_safely(pages: List[Dict], output_file: str):
         logger.info(f"File: Saved {len(pages)} pages to {output_file}")
     except Exception as e:
         logger.error(f"File save error: {e}")
-    
+
+    if NO_DB:
+        return
+
     # MySQL 저장
     try:
         save_to_mysql(pages)
     except Exception as e:
         logger.error(f"MySQL save failed: {e}")
-    
+
     # MongoDB 저장
     try:
         save_to_mongo(pages)
@@ -622,31 +733,25 @@ def test_database_connection():
 def debug_crawl_single_page():
     """단일 페이지 크롤링 테스트"""
     logger.info("Testing single page crawl...")
-    
-    # 간단한 테스트용 드라이버 생성
-    opts = Options()
-    opts.add_argument('--headless')
-    opts.add_argument('--no-sandbox')
-    opts.add_argument('--disable-dev-shm-usage')
-    
-    service = Service(executable_path=DRIVER_PATH, log_path=os.devnull)
-    driver = webdriver.Chrome(service=service, options=opts)
-    
+
+    driver = make_chrome_driver()
+
     global _worker_driver, VISITED
     _worker_driver = driver
     VISITED = {}
     
     try:
-        # 간단한 페이지 테스트
-        test_url = f"{BASE_URL}/w/원피스"
-        pages = crawl_recursive("원피스", test_url, 0)
+        test_title = os.getenv("DEBUG_TITLE", "귀멸의 칼날")
+        test_url = os.getenv("DEBUG_URL", f"{BASE_URL}/w/{quote(test_title)}")
+        logger.info(f"DEBUG target: {test_title} -> {test_url}")
+        pages = crawl_recursive(test_title, test_url, 0)
         
         logger.info(f"Test crawl result: {len(pages)} pages")
         for i, page in enumerate(pages[:3]):  # 처음 3개만 출력
             logger.info(f"Page {i}: {page['title']} (depth: {page['metadata']['depth']})")
         
         if pages:
-            save_pages_safely(pages, "test_crawl.jsonl")
+            save_pages_safely(pages, "crawl_dryrun.jsonl")
             
     finally:
         driver.quit()
@@ -658,13 +763,13 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
         logger.info("Debug mode enabled")
     
-    # DB 연결 테스트
-    test_database_connection()
-    
-    # DB 초기화
-    init_db_pools()
-    setup_database()
-    
+    if NO_DB:
+        logger.info("NO_DB=1: skipping MySQL/Mongo init (file-only mode)")
+    else:
+        test_database_connection()
+        init_db_pools()
+        setup_database()
+
     # 디버그 모드면 단일 페이지만 테스트
     if debug_mode:
         debug_crawl_single_page()
@@ -672,25 +777,25 @@ def main():
 
     # 시드 애니 제목 목록 로드
     try:
-        with open("anime_titles_clean.json", encoding="utf-8") as f:
+        with open(SEED_FILE, encoding="utf-8") as f:
             data: Dict[str, List[str]] = json.load(f)
     except Exception as e:
-        logger.error(f"anime_titles_clean.json load failed: {e}")
+        logger.error(f"{SEED_FILE} load failed: {e}")
         return
 
     anime_titles: List[str] = []
     for period in sorted(data.keys()):
         anime_titles.extend(data[period])
-    logger.info(f"Loaded {len(anime_titles)} seed titles.")
+    # 중복 제거(여러 쿼터에 같은 작품이 있을 수 있음)
+    seen_t = set()
+    anime_titles = [t for t in anime_titles if not (t in seen_t or seen_t.add(t))]
+    logger.info(f"Loaded {len(anime_titles)} unique seed titles from {SEED_FILE}.")
 
-    # 테스트를 위해 처음 5개만 크롤링
-    test_titles = anime_titles  # 전체 크롤링시에는 anime_titles로 변경
-    logger.info(f"Testing with {len(test_titles)} titles: {test_titles}")
-
+    test_titles = anime_titles
     tasks = [(t, f"{BASE_URL}/w/{quote(t)}") for t in test_titles]
-    output_file = "crawled.jsonl"
+    output_file = OUTPUT_FILE
     if os.path.exists(output_file):
-        os.remove(output_file)
+        logger.info(f"Output file {output_file} already exists; appending (no truncate).")
 
     manager = Manager()
     shared_visited = manager.dict()
@@ -721,20 +826,28 @@ def main():
             pass
 
     # 최종 결과 확인
-    try:
-        conn = mysql.connector.connect(**MYSQL_CONFIG)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM crawled_pages")
-        total_count = cursor.fetchone()[0]
-        cursor.execute("SELECT seed_title, COUNT(*) as cnt FROM crawled_pages GROUP BY seed_title ORDER BY cnt DESC LIMIT 10")
-        top_seeds = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        logger.info(f"Final MySQL count: {total_count} total pages")
-        logger.info(f"Top seeds: {top_seeds}")
-    except Exception as e:
-        logger.error(f"Final count check failed: {e}")
+    if NO_DB:
+        try:
+            with open(output_file, encoding="utf-8") as f:
+                line_count = sum(1 for _ in f)
+            logger.info(f"Final file count: {line_count} lines in {output_file}")
+        except Exception as e:
+            logger.error(f"Final file count failed: {e}")
+    else:
+        try:
+            conn = mysql.connector.connect(**MYSQL_CONFIG)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM crawled_pages")
+            total_count = cursor.fetchone()[0]
+            cursor.execute("SELECT seed_title, COUNT(*) as cnt FROM crawled_pages GROUP BY seed_title ORDER BY cnt DESC LIMIT 10")
+            top_seeds = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            logger.info(f"Final MySQL count: {total_count} total pages")
+            logger.info(f"Top seeds: {top_seeds}")
+        except Exception as e:
+            logger.error(f"Final count check failed: {e}")
 
     logger.info("크롤링 완료")
 
